@@ -30,7 +30,6 @@ def save_seen_events(events):
         json.dump(list(events), f, ensure_ascii=False, indent=2)
 
 def run():
-    send_telegram("🚀 **تم الاتصال بنجاح! السكريبت يعمل ويراقب Webook الان.**")
     TARGET_URL = "https://webook.com/ar/events"
     seen_events = load_seen_events()
     current_events = set()
