@@ -90,5 +90,5 @@ def run_monitor():
         finally:
             browser.close()
 
-if name == "__main__":
+if __name__ == "__main__":
     run_monitor()
