@@ -2,7 +2,7 @@ name: Webook exp
 
 on:
   schedule:
-    # تشغيل كل 5 دقائق على مدار 24 ساعة طوال أيام الأسبوع
+    # تشغيل كل 5 دقائق (قد تختلف الدقة حسب ضغط سيرفرات غيت هاب)
     - cron: '*/5 * * * *'
   workflow_dispatch: # يتيح لك التشغيل اليدوي في أي وقت
 
@@ -31,6 +31,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install playwright requests
         playwright install chromium
+        playwright install-deps chromium
 
     - name: Run Webook monitor script
       env:
@@ -40,6 +41,7 @@ jobs:
 
     - name: Save cache for seen events
       uses: actions/cache@v4
+      if: always() # يضمن حفظ الكاش حتى لو انتهى تشغيل السكربت بشكل طبيعي
       with:
         path: seen_events.json
         key: seen-events-${{ github.run_id }}
