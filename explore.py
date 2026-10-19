@@ -5,7 +5,7 @@ from playwright.sync_api import sync_playwright
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-CACHE_FILE = "seen_events.json"
+CACHE_FILE = "seen_evenooots.json"
 
 # الرابط المستهدف المباشر لصفحة كرة القدم
 TARGET_URL = "https://webook.com/ar/explore?tag=football"
