@@ -2,9 +2,8 @@ name: Webook exp
 
 on:
   schedule:
-    # تشغيل كل 5 دقائق (قد تختلف الدقة حسب ضغط سيرفرات غيت هاب)
-    - cron: '*/1 * * * *'
-  workflow_dispatch: # يتيح لك التشغيل اليدوي في أي وقت
+    - cron: '*/5 * * * *' # كاحتياط في حال توقف التشغيل الذاتي
+  workflow_dispatch: # للتشغيل اليدوي
 
 jobs:
   check-webook:
@@ -41,7 +40,14 @@ jobs:
 
     - name: Save cache for seen events
       uses: actions/cache@v4
-      if: always() # يضمن حفظ الكاش حتى لو انتهى تشغيل السكربت بشكل طبيعي
+      if: always()
       with:
         path: seen_events.json
         key: seen-events-${{ github.run_id }}
+
+    - name: Trigger next run immediately
+      if: always()
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh workflow run "Webook exp" --repo ${{ github.repository }}
