@@ -32,11 +32,11 @@ jobs:
         pip install playwright requests
         playwright install chromium
 
-    - name: Run Webook monitor script
+    - name: Run Webook exppp
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python name: explore.py
+      run: python explore.py
 
 on:
   schedule:
