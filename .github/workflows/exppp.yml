@@ -2,7 +2,7 @@ name: Webook exp
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # كاحتياط في حال توقف التشغيل الذاتي
+    - cron: '*/5 * * * *' # كاحتياط فقط
   workflow_dispatch: # للتشغيل اليدوي
 
 jobs:
