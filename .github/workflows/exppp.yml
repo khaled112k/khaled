@@ -50,4 +50,4 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh workflow run "Webook exp" --repo ${{ github.repository }}
+        gh workflow run "exppp.yml" --repo ${{ github.repository }}
