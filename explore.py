@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import random
 import requests
 from playwright.sync_api import sync_playwright
 
@@ -7,10 +9,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CACHE_FILE = "seen_events.json"
 
-# الرابط المستهدف المباشر لصفحة كرة القدم
 TARGET_URL = "https://webook.com/ar/explore?tag=football"
-
-# قائمة الأندية المستهدفة
 TARGET_CLUBS = ["الاتحاد", "الهلال", "النصر", "الاهلي", "الأهلي", "القادسية"]
 
 def send_telegram_message(message):
@@ -42,11 +41,44 @@ def save_seen_events(seen_events):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(list(seen_events), f, ensure_ascii=False, indent=2)
 
+def run_single_check(page, seen_events):
+    new_found = 0
+    try:
+        print(f"🔍 جاري إعادة تحميل وفحص الصفحة...")
+        page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(4000)
+        
+        links = page.query_selector_all("a")
+        print(f"📊 إجمالي الروابط بالصفحة: {len(links)}")
+        
+        for link in links:
+            href = link.get_attribute("href")
+            if not href:
+                continue
+            
+            if any(path in href for path in ['/e/', '/events/', '/matches/', '/sports/']):
+                full_url = href if href.startswith("http") else f"https://webook.com{href}"
+                event_id = full_url.split("?")[0]
+                
+                if event_id not in seen_events:
+                    seen_events.add(event_id)
+                    title = link.inner_text().strip().replace("\n", " ")
+                    display_name = title if title else "مباراة / فعالية كرة قدم جديدة"
+                    
+                    if any(club in display_name for club in TARGET_CLUBS):
+                        new_found += 1
+                        msg = f"⚽ {display_name}\n🔗 <b>الرابط:</b> {full_url}"
+                        print(f"✨ تم كشف مباراة لأحد الأندية المستهدفة: {display_name}")
+                        send_telegram_message(msg)
+                        
+    except Exception as e:
+        print(f"❌ خطأ أثناء جولة الفحص: {e}")
+        
+    return new_found
+
 def run_monitor():
     seen_events = load_seen_events()
-    new_found = 0
-    print(f"🔍 بدء فحص صفحة مباريات كرة القدم: {TARGET_URL}")
-
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -55,45 +87,18 @@ def run_monitor():
         )
         page = context.new_page()
         
-        try:
-            # فتح صفحة الاستكشاف مباشرة
-            page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(5000) # انتظار تحميل الكروت ونتائج كرة القدم
-            
-            # البحث عن كافة العناصر والروابط داخل الصفحة
-            links = page.query_selector_all("a")
-            print(f"📊 إجمالي الروابط التي تم العثور عليها بالصفحة: {len(links)}")
-            
-            for link in links:
-                href = link.get_attribute("href")
-                if not href:
-                    continue
-                
-                # تصفية الروابط لتأخذ مسارات الفعاليات والمباريات فقط
-                if any(path in href for path in ['/e/', '/events/', '/matches/', '/sports/']):
-                    full_url = href if href.startswith("http") else f"https://webook.com{href}"
-                    event_id = full_url.split("?")[0] # التمييز بالرابط الأساسي بدون برامترات
-                    
-                    if event_id not in seen_events:
-                        seen_events.add(event_id)
-                        
-                        title = link.inner_text().strip().replace("\n", " ")
-                        display_name = title if title else "مباراة / فعالية كرة قدم جديدة"
-                        
-                        # التحقق من وجود أحد الأندية في عنوان الفعالية قبل إرسال التنبيه
-                        if any(club in display_name for club in TARGET_CLUBS):
-                            new_found += 1
-                            msg = f"⚽ {display_name}\n🔗 <b>الرابط:</b> {full_url}"
-                            print(f"✨ تم كشف مباراة لأحد الأندية المستهدفة: {display_name}")
-                            send_telegram_message(msg)
-            
+        # تنفيذ 10 محولات فحص متتالية في نفس الجلسة بفاصل عشوائي تقريبي (30 ثانية)
+        for i in range(1, 11):
+            print(f"\n--- بدء محاولة الفحص رقم ({i}/10) ---")
+            run_single_check(page, seen_events)
             save_seen_events(seen_events)
-            print(f"✅ اكتمل الفحص بنجاح. عدد الفعاليات الجديدة المكتشفة للأندية المستهدفة: {new_found}")
-
-        except Exception as e:
-            print(f"❌ حدث خطأ أثناء الفحص: {e}")
-        finally:
-            browser.close()
+            
+            if i < 10:
+                sleep_time = random.randint(25, 40)
+                print(f"⏳ انتظار عشوائي لمدة {sleep_time} ثانية...")
+                time.sleep(sleep_time)
+                
+        browser.close()
 
 if __name__ == "__main__":
     run_monitor()
