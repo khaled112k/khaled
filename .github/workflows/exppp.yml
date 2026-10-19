@@ -3,7 +3,7 @@ name: Webook exp
 on:
   schedule:
     # تشغيل كل 5 دقائق (قد تختلف الدقة حسب ضغط سيرفرات غيت هاب)
-    - cron: '*/5 * * * *'
+    - cron: '*/1 * * * *'
   workflow_dispatch: # يتيح لك التشغيل اليدوي في أي وقت
 
 jobs:
