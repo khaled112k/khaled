@@ -50,6 +50,13 @@ CLUBS = [
 
 EVENT_SELECTOR = 'a[href*="/events/"]'
 BLOCK_TYPES = {"image", "media", "font"}
+# نحجب الإعلانات والتحليلات بس (ويبوك تجيب المباريات من دومين ثاني: webook.cmscloud.ai)
+BLOCK_HOSTS = (
+    "googletagmanager", "google-analytics", "analytics.google", "doubleclick",
+    "googlesyndication", "googleadservices", "facebook", "hotjar", "clarity.ms",
+    "crazyegg", "amplitude", "ads-twitter", "analytics.twitter", "tiktok",
+    "snapchat", "sc-static", "adform", "app-us1.com", "stat-rock", "cloudflareinsights",
+)
 
 
 # ---------------- حفظ المباريات اللي شفناها ----------------
@@ -58,9 +65,10 @@ def load_seen():
         return None  # أول تشغيل
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
+            data = set(json.load(f))
+        return data or None  # ملف فاضي = نعامله كأول تشغيل (عشان ما يصير سبام)
     except Exception:
-        return set()
+        return None
 
 
 def save_seen(seen):
@@ -218,8 +226,7 @@ def make_page(p):
         host = (urlparse(req.url).hostname or "").lower()
         if req.resource_type in BLOCK_TYPES:
             return route.abort()
-        # نسمح بس لويبوك وكلاودفلير (فحص الحماية)، والباقي إعلانات وتحليلات
-        if not (host.endswith("webook.com") or "cloudflare" in host):
+        if any(b in host for b in BLOCK_HOSTS):
             return route.abort()
         return route.continue_()
 
@@ -235,6 +242,10 @@ def scan(page, url):
     try:
         page.wait_for_selector(EVENT_SELECTOR, timeout=20000)
     except Exception:
+        try:
+            print(f"   ↳ عنوان الصفحة: {page.title()!r} | الرابط: {page.url}")
+        except Exception:
+            pass
         return None
     page.wait_for_timeout(600)  # ثانية صغيرة عشان تكمل البطاقات
     return page.eval_on_selector_all(
@@ -320,7 +331,8 @@ def main():
                 if first_run or new_count:
                     save_seen(seen)
 
-            if first_run:
+            # ما ننهي "أول تشغيل" إلا إذا الصفحة حمّلت فعلاً ولقينا مباريات
+            if first_run and seen:
                 first_run = False
                 save_seen(seen)
                 print(f"💾 تم حفظ {len(seen)} مباراة موجودة. من الحين أي جديد ينتشر فوراً.")
