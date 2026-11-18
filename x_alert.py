@@ -37,6 +37,7 @@ ALL_CLUBS = os.getenv("ALL_CLUBS", "false").lower() == "true"
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
 CACHE_FILE = "x_seen_events.json"
+USD_TO_SAR = 3.75  # سعر الربط الرسمي
 MAX_POST_ATTEMPTS = 3
 
 # الأندية: كلمات تظهر في رابط المباراة  ->  الوسم
@@ -105,14 +106,21 @@ def parse_card(text):
             info["city"] = p.split(",")[0].split("،")[0].strip()
         elif "يبدأ من" in p and not info["price"]:
             # السعر: أول رقم بعد "يبدأ من" (أحياناً يجي قبله رمز العملة لحاله)
-            # إذا السعر بالدولار (سيرفرات GitHub بأمريكا) ما نكتبه عشان ما يطلع غلط
+            # إذا السعر بالدولار (سيرفرات GitHub بأمريكا) نحوّله للريال: الريال مربوط بالدولار 3.75
             usd = False
             for cand in [p] + parts[i + 1:i + 4]:
                 if "$" in cand or "USD" in cand.upper():
                     usd = True
-                m = re.search(r"\d[\d,٬.]*", cand.replace("يبدأ من", ""))
+                m = re.search(r"\d[\d,٬]*(?:\.\d+)?", cand.replace("يبدأ من", ""))
                 if m:
-                    info["price"] = "" if usd else m.group(0)
+                    num = m.group(0).replace(",", "").replace("٬", "")
+                    try:
+                        val = float(num)
+                        if usd:
+                            val *= USD_TO_SAR
+                        info["price"] = f"{round(val):,}"
+                    except ValueError:
+                        info["price"] = ""
                     break
 
     titles = [p for p in parts if " ضد " in p or " vs " in p.lower()]
@@ -148,7 +156,7 @@ def build_tweet(info, tags, url):
     if len(title) > 110:
         title = title[:107] + "..."
 
-    lines = [f"🚨 نزلت التذاكر | {title}"]
+    lines = [f"🚨 نزلت تذاكر | {title}"]
     when = " ".join(x for x in (info["date"], info["time"]) if x)
     if when:
         lines.append(f"📅 {when}")
@@ -158,7 +166,7 @@ def build_tweet(info, tags, url):
         lines.append(f"💰 تبدأ من {info['price']} ريال")
     lines.append("⚡ متاحة الآن في ويبوك")
     if INCLUDE_LINK:
-        lines.append(url)
+        lines.append(f"🔗 {url}")
 
     hashtags = " ".join(tags + ["#دوري_روشن", "#تذاكر"])
     text = "\n".join(lines) + "\n\n" + hashtags
