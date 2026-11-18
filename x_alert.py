@@ -169,8 +169,19 @@ def build_tweet(info, tags, url):
         lines.append(f"🔗 {url}")
 
     hashtags = " ".join(tags + ["#دوري_روشن", "#تذاكر"])
-    text = "\n".join(lines) + "\n\n" + hashtags
-    return text[:280]
+    # سطر فاضي بين كل صف وصف
+    text = "\n\n".join(lines) + "\n\n" + hashtags
+
+    # X يحسب الرابط 23 حرف مهما كان طوله، والإيموجي حرفين
+    def x_len(t):
+        if INCLUDE_LINK and url in t:
+            t = t.replace(url, "x" * 23)
+        return sum(2 if ord(c) > 0xFFFF else 1 for c in t)
+
+    if x_len(text) > 280:
+        lines = [l for l in lines if not l.startswith("⚡")]
+        text = "\n\n".join(lines) + "\n\n" + hashtags
+    return text
 
 
 _x_client = None
