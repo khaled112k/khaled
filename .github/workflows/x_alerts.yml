@@ -13,6 +13,10 @@ on:
         description: 'مدة التشغيل بالدقائق'
         required: false
         default: '340'
+      forget:
+        description: 'للتجربة: مباريات تنحذف من المحفوظ عشان يغرد فيها (مثال: al-ahli-vs-al-taawoun)'
+        required: false
+        default: ''
   # الجدولة الاحتياطية — فعّلها بعد ما تتأكد إن التجربة نجحت (شيل علامة # من السطرين)
   # schedule:
   #   - cron: '*/30 * * * *'
@@ -62,6 +66,7 @@ jobs:
           INCLUDE_LINK: "true"
           ALL_CLUBS: "false"
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          FORGET_KEYS: ${{ github.event.inputs.forget || '' }}
         run: python x_alert.py
 
       - name: Save seen events
