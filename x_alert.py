@@ -104,11 +104,16 @@ def parse_card(text):
         elif "المملكة" in p and not info["city"]:
             info["city"] = p.split(",")[0].split("،")[0].strip()
         elif "يبدأ من" in p and not info["price"]:
-            rest = p.replace("يبدأ من", "").strip()
-            if rest:
-                info["price"] = rest
-            elif i + 1 < len(parts):
-                info["price"] = parts[i + 1]
+            # السعر: أول رقم بعد "يبدأ من" (أحياناً يجي قبله رمز العملة لحاله)
+            # إذا السعر بالدولار (سيرفرات GitHub بأمريكا) ما نكتبه عشان ما يطلع غلط
+            usd = False
+            for cand in [p] + parts[i + 1:i + 4]:
+                if "$" in cand or "USD" in cand.upper():
+                    usd = True
+                m = re.search(r"\d[\d,٬.]*", cand.replace("يبدأ من", ""))
+                if m:
+                    info["price"] = "" if usd else m.group(0)
+                    break
 
     titles = [p for p in parts if " ضد " in p or " vs " in p.lower()]
     if titles:
