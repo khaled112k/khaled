@@ -17,9 +17,9 @@ on:
         description: 'للتجربة: مباريات تنحذف من المحفوظ عشان يغرد فيها (مثال: al-ahli-vs-al-taawoun)'
         required: false
         default: ''
-  # الجدولة الاحتياطية — فعّلها بعد ما تتأكد إن التجربة نجحت (شيل علامة # من السطرين)
-  # schedule:
-  #   - cron: '*/30 * * * *'
+  # الجدولة الاحتياطية: لو انقطعت السلسلة يرجع يشتغل خلال 30 دقيقة
+  schedule:
+    - cron: '*/30 * * * *'
 
 concurrency:
   group: webook-x-alerts
