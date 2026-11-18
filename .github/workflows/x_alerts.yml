@@ -59,7 +59,7 @@ jobs:
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
           POLL_SECONDS: "12"
           RUN_MINUTES: ${{ github.event.inputs.run_minutes || '340' }}
-          INCLUDE_LINK: "false"
+          INCLUDE_LINK: "true"
           ALL_CLUBS: "false"
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: python x_alert.py
