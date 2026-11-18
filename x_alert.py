@@ -270,6 +270,12 @@ def scan(page, url):
 # ---------------- الحلقة الرئيسية ----------------
 def main():
     seen = load_seen()
+    # للتجربة: نحذف مباريات من المحفوظ عشان يغرد فيها كأنها جديدة (FORGET_KEYS=al-ahli-vs-al-taawoun)
+    forget = [k.strip().lower() for k in os.getenv("FORGET_KEYS", "").split(",") if k.strip()]
+    if seen and forget:
+        removed = {k for k in seen if any(f in k for f in forget)}
+        seen -= removed
+        print(f"🧹 حذفت من المحفوظ: {sorted(removed) or 'ولا شي (ما لقيت تطابق)'}")
     first_run = seen is None
     if first_run:
         seen = set()
