@@ -20,6 +20,8 @@ x_alert.py — مراقب ويبوك السريع وينشر التنبيه في
   VIP_CHAT_ID   رقم قناة VIP (افتراضي -1004418967399)
   VIP_HEAD_START كم ثانية تسبق VIP تغريدة X (افتراضي 90)
   VIP_CATEGORIES true يرسل لـ VIP رسالة ثانية فيها كل الفئات وأسعارها
+  WATCH_URLS    روابط مباريات نراقب دفعاتها (زر احجز رجع / فئة جديدة) — التنبيه لـ VIP بس
+  WATCH_EVERY   كل كم ثانية نفحص صفحات المراقبة (افتراضي 60)
   EXCLUDE_WORDS كلمات تستثني البطولة إذا ظهرت بالرابط أو العنوان (افتراضي: تحت 21 والنسائي)
 """
 
@@ -50,6 +52,16 @@ VIP_BOT_TOKEN = os.getenv("VIP_BOT_TOKEN", "").strip()
 VIP_CHAT_ID = os.getenv("VIP_CHAT_ID", "-1004418967399").strip()
 VIP_HEAD_START = float(os.getenv("VIP_HEAD_START", "90"))
 VIP_CATEGORIES = os.getenv("VIP_CATEGORIES", "true").lower() == "true"
+
+# ======== مراقبة دفعات التذاكر ========
+# حط روابط صفحات المباريات اللي تبي تراقب دفعاتها (مفصولة بفاصلة). غيّرها متى ما بغيت.
+WATCH_URLS = [u.strip() for u in os.getenv(
+    "WATCH_URLS",
+    "https://webook.com/ar/sa/jed/sports-event/events/rsl-26-27-the-jeddah-derby-ittihad-vs-ahli",
+).split(",") if u.strip()]
+WATCH_EVERY = float(os.getenv("WATCH_EVERY", "60"))  # كل كم ثانية يفحص صفحات المراقبة
+WATCH_FILE = "watch_state.json"
+# =====================================
 
 # الأندية: كلمات تظهر في رابط المباراة  ->  الوسم
 # نطابق الاسم ككلمة كاملة بين الشرطات، بـ al- أو بدونها (مثال: ittihad-vs-ahli)
@@ -395,6 +407,125 @@ def categories_text(cats):
     return "🎟️ الفئات والأسعار:\n" + "\n".join(f"• {n} — {p:,} ريال" for n, p in cats)
 
 
+# ---------------- مراقبة الدفعات ----------------
+# صفحة المباراة العامة (بدون تسجيل دخول): زر "احجز" يعني فيه تذاكر، "أبلغني" يعني خالصة
+SNAP_JS = """
+() => {
+  const h1 = document.querySelector('h1');
+  const els = [...document.querySelectorAll('a,button')].map(e => [e.innerText.trim(), e.getAttribute('href') || '']);
+  return {
+    title: h1 ? h1.innerText.trim() : '',
+    book: els.some(([t, h]) => /^(احجز|Book)$/i.test(t) && h.includes('/book')),
+    notify: els.some(([t]) => /^(أبلغني|Notify me)$/i.test(t)),
+  };
+}
+"""
+
+
+def parse_cat_rows(rows):
+    cats = []
+    for name, raw, sar in rows:
+        nums = re.findall(r"\d[\d,٬]*(?:\.\d+)?", raw or "")
+        if not name or not nums:
+            continue
+        try:
+            val = float(nums[-1].replace(",", "").replace("٬", ""))
+        except ValueError:
+            continue
+        if "$" in raw or "USD" in raw.upper() or not sar:
+            val *= USD_TO_SAR
+        cats.append([name, round(val)])
+    cats.sort(key=lambda c: c[1])
+    return cats
+
+
+def fetch_snapshot(page, url):
+    """يقرأ صفحة المباراة: هل الحجز متاح + الفئات وأسعارها. يرجع None إذا ما حمّلت صح."""
+    det = None
+    info, rows = {}, []
+    try:
+        det = page.context.new_page()
+        det.goto(url, wait_until="domcontentloaded", timeout=25000)
+        det.wait_for_selector("h1", timeout=15000)
+        try:
+            det.get_by_text(re.compile("أنواع التذاكر|Ticket types|أبلغني", re.I)).first.wait_for(timeout=8000)
+        except Exception:
+            pass
+        info = det.evaluate(SNAP_JS)
+        if det.get_by_text(re.compile("أنواع التذاكر|Ticket types", re.I)).count():
+            more = det.locator("button", has_text=re.compile("استكشف المزيد|Explore more|See more|View more", re.I))
+            if more.count():
+                more.first.click(timeout=5000)
+                det.wait_for_selector("[role=dialog] h3", timeout=5000)
+            rows = det.evaluate(CATS_JS)
+    except Exception as e:
+        print(f"⚠️ مراقبة الدفعات {url}: {e}")
+        return None
+    finally:
+        if det:
+            try:
+                det.close()
+            except Exception:
+                pass
+    if not info.get("title") or not (info.get("book") or info.get("notify") or rows):
+        return None
+    return {"title": info["title"], "bookable": bool(info["book"]) and not info["notify"],
+            "cats": parse_cat_rows(rows)}
+
+
+def load_watch():
+    try:
+        with open(WATCH_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_watch(state):
+    try:
+        with open(WATCH_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"⚠️ حفظ المراقبة: {e}")
+
+
+def batch_text(snap, url, new_cats, reopened):
+    derby = derby_of(club_tags(event_key(url)))
+    head = f"🔥🔥 {derby[0]} — نزلت دفعة جديدة 🔥🔥" if derby else "🔥 نزلت دفعة تذاكر جديدة"
+    lines = [head, f"🏟️ {snap['title']}"]
+    if new_cats:
+        lines.append("🆕 فئات نزلت:\n" + "\n".join(f"• {n} — {p:,} ريال" for n, p in new_cats))
+    elif reopened:
+        lines.append("✅ التذاكر رجعت متاحة للحجز")
+    if snap["cats"]:
+        lines.append(categories_text(snap["cats"]))
+    lines.append("⚡ الحق قبل لا تخلص!")
+    lines.append(f"🔗 {url}")
+    return "\n\n".join(lines)
+
+
+def watch_check(page, state):
+    for url in WATCH_URLS:
+        snap = fetch_snapshot(page, url)
+        if not snap:
+            continue
+        prev = state.get(url)
+        if prev and prev.get("cats") and not snap["cats"] and snap["bookable"] == prev.get("bookable"):
+            continue  # غالباً الفئات ما حمّلت هالمرة، نتجاهل القراءة
+        state[url] = snap
+        save_watch(state)
+        if not prev:
+            print(f"👀 بدأت أراقب الدفعات: {snap['title']} — {len(snap['cats'])} فئة، "
+                  f"الحجز {'متاح' if snap['bookable'] else 'مقفل'}")
+            continue
+        old = {n for n, _ in prev.get("cats", [])}
+        new_cats = [c for c in snap["cats"] if c[0] not in old]
+        reopened = snap["bookable"] and not prev.get("bookable")
+        if new_cats or reopened:
+            print(f"🔥 دفعة جديدة: {snap['title']} — فئات جديدة: {len(new_cats)}، رجع الحجز: {reopened}")
+            send_vip(batch_text(snap, url, new_cats, reopened))
+
+
 def make_page(p):
     browser = p.chromium.launch(
         headless=True,
@@ -457,6 +588,8 @@ def main():
 
     attempts = {}  # key -> عدد محاولات النشر الفاشلة
     pending = []  # [موعد النشر في X, key, التغريدة, عدد المحاولات]
+    watch_state = load_watch()
+    next_watch = 0
     deadline = time.time() + RUN_MINUTES * 60
     fails_in_row = 0
     loop = 0
@@ -538,6 +671,9 @@ def main():
                 print(f"💾 تم حفظ {len(seen)} مباراة موجودة. من الحين أي جديد ينتشر فوراً.")
 
             pending = flush_pending(pending)
+            if WATCH_URLS and time.time() >= next_watch:
+                watch_check(page, watch_state)
+                next_watch = time.time() + WATCH_EVERY
 
             took = time.time() - t0
             if loop % 20 == 1:
