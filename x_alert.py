@@ -16,6 +16,9 @@ x_alert.py — مراقب ويبوك السريع وينشر التنبيه في
   INCLUDE_LINK  true يحط رابط ويبوك بالتغريدة (أغلى: ~0.20$ بدل ~0.015$)
   ALL_CLUBS     true ينشر كل المباريات مو بس الأندية المحددة
   DRY_RUN       true يطبع التغريدة بدون ما ينشرها (للتجربة)
+  VIP_BOT_TOKEN توكن بوت VIP — إذا موجود يرسل التنبيه لقناة VIP أول
+  VIP_CHAT_ID   رقم قناة VIP (افتراضي -1004418967399)
+  VIP_HEAD_START كم ثانية تسبق VIP تغريدة X (افتراضي 90)
 """
 
 import os
@@ -23,6 +26,7 @@ import re
 import json
 import time
 import random
+import urllib.request
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
@@ -39,6 +43,10 @@ DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 CACHE_FILE = "x_seen_events.json"
 USD_TO_SAR = 3.75  # سعر الربط الرسمي
 MAX_POST_ATTEMPTS = 3
+
+VIP_BOT_TOKEN = os.getenv("VIP_BOT_TOKEN", "").strip()
+VIP_CHAT_ID = os.getenv("VIP_CHAT_ID", "-1004418967399").strip()
+VIP_HEAD_START = float(os.getenv("VIP_HEAD_START", "90"))
 
 # الأندية: كلمات تظهر في رابط المباراة  ->  الوسم
 CLUBS = [
@@ -232,6 +240,59 @@ def post_to_x(text):
 
 
 # ---------------- المتصفح ----------------
+# ---------------- قناة VIP في تيليجرام ----------------
+def head_start():
+    return VIP_HEAD_START if VIP_BOT_TOKEN else 0
+
+
+def vip_text(tweet, url):
+    text = "⚡ VIP — " + tweet
+    if url and url not in text:
+        text += "\n\n" + url
+    return text
+
+
+def send_vip(text):
+    """يرسل التنبيه لقناة VIP قبل X. يرجع True إذا وصل."""
+    if not VIP_BOT_TOKEN:
+        return False
+    if DRY_RUN:
+        print("🧪 [VIP]\n" + text)
+        return True
+    body = json.dumps({"chat_id": VIP_CHAT_ID, "text": text}).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{VIP_BOT_TOKEN}/sendMessage",
+        data=body, headers={"Content-Type": "application/json"})
+    for i in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                if json.load(r).get("ok"):
+                    print("📣 وصل التنبيه لقناة VIP")
+                    return True
+        except Exception as e:
+            print(f"⚠️ VIP محاولة {i + 1}: {e}")
+        time.sleep(2)
+    return False
+
+
+def flush_pending(pending):
+    """ينشر في X التنبيهات اللي خلص وقت سبقها لـ VIP."""
+    left = []
+    for item in pending:
+        due, key, tweet, tries = item
+        if time.time() < due:
+            left.append(item)
+            continue
+        if post_to_x(tweet):
+            continue
+        tries += 1
+        if tries < MAX_POST_ATTEMPTS:
+            left.append([time.time() + 30, key, tweet, tries])
+        else:
+            print(f"🚫 تركت تغريدة المباراة بعد {MAX_POST_ATTEMPTS} محاولات: {key}")
+    return left
+
+
 def make_page(p):
     browser = p.chromium.launch(
         headless=True,
@@ -293,6 +354,7 @@ def main():
         print("🆕 أول تشغيل: بحفظ المباريات الموجودة بدون نشر")
 
     attempts = {}  # key -> عدد محاولات النشر الفاشلة
+    pending = []  # [موعد النشر في X, key, التغريدة, عدد المحاولات]
     deadline = time.time() + RUN_MINUTES * 60
     fails_in_row = 0
     loop = 0
@@ -349,14 +411,11 @@ def main():
                     info = parse_card(text)
                     tweet = build_tweet(info, tags, full_url(href))
                     print(f"✨ مباراة جديدة: {info['title']}  ({key})")
-                    if post_to_x(tweet):
-                        seen.add(key)
-                        new_count += 1
-                    else:
-                        attempts[key] = attempts.get(key, 0) + 1
-                        if attempts[key] >= MAX_POST_ATTEMPTS:
-                            print(f"🚫 تركت المباراة بعد {MAX_POST_ATTEMPTS} محاولات: {key}")
-                            seen.add(key)
+                    # VIP أول، وبعد VIP_HEAD_START ثانية ينشر في X
+                    send_vip(vip_text(tweet, full_url(href)))
+                    seen.add(key)
+                    new_count += 1
+                    pending.append([time.time() + head_start(), key, tweet, 0])
 
                 if first_run or new_count:
                     save_seen(seen)
@@ -367,12 +426,19 @@ def main():
                 save_seen(seen)
                 print(f"💾 تم حفظ {len(seen)} مباراة موجودة. من الحين أي جديد ينتشر فوراً.")
 
+            pending = flush_pending(pending)
+
             took = time.time() - t0
             if loop % 20 == 1:
                 print(f"🔁 فحص #{loop} خلص في {took:.1f} ث — محفوظ {len(seen)} مباراة")
             wait = max(1.0, POLL_SECONDS + random.uniform(-3, 3) - took)
             time.sleep(wait)
 
+        # ننشر الباقي في X قبل ما نطلع
+        end_by = time.time() + head_start() + 120
+        while pending and time.time() < end_by:
+            time.sleep(5)
+            pending = flush_pending(pending)
         save_seen(seen)
         try:
             browser.close()
