@@ -20,6 +20,7 @@ x_alert.py — مراقب ويبوك السريع وينشر التنبيه في
   VIP_CHAT_ID   رقم قناة VIP (افتراضي -1004418967399)
   VIP_HEAD_START كم ثانية تسبق VIP تغريدة X (افتراضي 90)
   VIP_CATEGORIES true يرسل لـ VIP رسالة ثانية فيها كل الفئات وأسعارها
+  EXCLUDE_WORDS كلمات تستثني البطولة إذا ظهرت بالرابط أو العنوان (افتراضي: تحت 21 والنسائي)
 """
 
 import os
@@ -151,6 +152,19 @@ def parse_card(text):
                 info["league"] = left.strip()
             break
     return info
+
+
+# بطولات ما نبي لها تنبيه: دوري جوّي للنخبة تحت 21 والدوري النسائي
+EXCLUDE_WORDS = [w.strip().lower() for w in os.getenv(
+    "EXCLUDE_WORDS",
+    "u21,u-21,under-21,jawwy,elite-league,تحت 21,جوي,women,womens,ladies,wsl,سيدات,نسائي",
+).split(",") if w.strip()]
+
+
+def is_excluded(key, text):
+    blob = (key + " " + (text or "")).lower()
+    blob = re.sub(r"[\u064B-\u0652\u0640]", "", blob)  # نشيل التشكيل: جوّي -> جوي
+    return any(w in blob for w in EXCLUDE_WORDS)
 
 
 def club_tags(key):
@@ -476,6 +490,10 @@ def main():
                     tags = club_tags(key)
                     if not tags and not ALL_CLUBS:
                         seen.add(key)  # مو من الأندية المطلوبة
+                        continue
+                    if is_excluded(key, text):
+                        seen.add(key)  # بطولة مستثناة (تحت 21 / نسائية)
+                        print(f"⏭️ تجاهلت بطولة مستثناة: {key}")
                         continue
 
                     info = parse_card(text)
