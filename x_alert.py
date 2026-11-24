@@ -374,7 +374,7 @@ def fetch_categories(page, url):
         det.get_by_text(re.compile("أنواع التذاكر|Ticket types", re.I)).first.wait_for(timeout=15000)
         more = det.locator("button", has_text=re.compile("استكشف المزيد|Explore more|See more|View more", re.I))
         if more.count():
-            more.first.click(timeout=5000)
+            more.first.evaluate("el => el.click()")  # ضغط من داخل الصفحة عشان النوافذ المنبثقة ما تمنعه
             det.wait_for_selector("[role=dialog] h3", timeout=5000)
         rows = det.evaluate(CATS_JS)
     except Exception as e:
@@ -455,7 +455,7 @@ def fetch_snapshot(page, url):
         if det.get_by_text(re.compile("أنواع التذاكر|Ticket types", re.I)).count():
             more = det.locator("button", has_text=re.compile("استكشف المزيد|Explore more|See more|View more", re.I))
             if more.count():
-                more.first.click(timeout=5000)
+                more.first.evaluate("el => el.click()")  # ضغط من داخل الصفحة عشان النوافذ المنبثقة ما تمنعه
                 det.wait_for_selector("[role=dialog] h3", timeout=5000)
             rows = det.evaluate(CATS_JS)
     except Exception as e:
