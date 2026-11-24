@@ -405,6 +405,29 @@ def make_page(p):
     return browser, page
 
 
+# صفحة الاستكشاف تعرض 7 مباريات بس، والباقي يطلع بزر "عرض المزيد" (~80 مباراة)
+LOAD_ALL_JS = """
+async () => {
+  const count = () => document.querySelectorAll('a[href*="/events/"]').length;
+  const findBtn = () => [...document.querySelectorAll('button')]
+    .find(b => /^(عرض المزيد|Show more|Load more|View more)$/i.test(b.innerText.trim()));
+  let clicks = 0;
+  for (let i = 0; i < 40; i++) {
+    const b = findBtn();
+    if (!b) break;
+    const n = count();
+    b.click();
+    clicks++;
+    const s = Date.now();
+    while (count() === n && Date.now() - s < 4000) await new Promise(r => setTimeout(r, 100));
+    if (count() === n) break;
+  }
+  return clicks;
+}
+"""
+FULL_MARKER = "__full_scan_v1__"  # علامة إن المحفوظ صار يشمل كل المباريات مو بس أول 7
+
+
 def scan(page, url):
     """يرجع قائمة [(href, text)] أو None إذا الصفحة ما حمّلت."""
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -417,6 +440,10 @@ def scan(page, url):
             pass
         return None
     page.wait_for_timeout(600)  # ثانية صغيرة عشان تكمل البطاقات
+    try:
+        page.evaluate(LOAD_ALL_JS)  # نضغط "عرض المزيد" لين تطلع كل المباريات
+    except Exception as e:
+        print(f"⚠️ عرض المزيد: {e}")
     return page.eval_on_selector_all(
         EVENT_SELECTOR,
         "els => els.map(e => [e.getAttribute('href') || '', e.innerText || ''])",
@@ -436,6 +463,11 @@ def main():
     if first_run:
         seen = set()
         print("🆕 أول تشغيل: بحفظ المباريات الموجودة بدون نشر")
+    elif FULL_MARKER not in seen:
+        # أول مرة نشوف كل المباريات: نحفظ الموجود بدون نشر عشان ما ينشر ~70 مباراة قديمة كأنها جديدة
+        first_run = True
+        print("🆕 أول تشغيل مع كل المباريات: بحفظ الموجود بدون نشر")
+    absorbed = False  # صار عندنا فحص ناجح في وضع أول تشغيل
 
     attempts = {}  # key -> عدد محاولات النشر الفاشلة
     pending = []  # [موعد النشر في X, key, التغريدة, عدد المحاولات]
@@ -470,6 +502,8 @@ def main():
                         fails_in_row = 0
                     continue
                 fails_in_row = 0
+                if first_run and items:
+                    absorbed = True
 
                 new_count = 0
                 for href, text in items:
@@ -514,8 +548,9 @@ def main():
                     save_seen(seen)
 
             # ما ننهي "أول تشغيل" إلا إذا الصفحة حمّلت فعلاً ولقينا مباريات
-            if first_run and seen:
+            if first_run and absorbed:
                 first_run = False
+                seen.add(FULL_MARKER)
                 save_seen(seen)
                 print(f"💾 تم حفظ {len(seen)} مباراة موجودة. من الحين أي جديد ينتشر فوراً.")
 
