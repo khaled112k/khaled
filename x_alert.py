@@ -51,12 +51,13 @@ VIP_HEAD_START = float(os.getenv("VIP_HEAD_START", "90"))
 VIP_CATEGORIES = os.getenv("VIP_CATEGORIES", "true").lower() == "true"
 
 # الأندية: كلمات تظهر في رابط المباراة  ->  الوسم
+# نطابق الاسم ككلمة كاملة بين الشرطات، بـ al- أو بدونها (مثال: ittihad-vs-ahli)
 CLUBS = [
-    (["al-hilal"], "#الهلال"),
-    (["al-nassr"], "#النصر"),
-    (["al-ittihad"], "#الاتحاد"),
-    (["al-ahli"], "#الأهلي"),
-    (["al-qadsiah", "al-qadisiyah", "al-qadsia", "al-qadisiya"], "#القادسية"),
+    (["hilal"], "#الهلال"),
+    (["nassr", "nasr"], "#النصر"),
+    (["ittihad", "itihad"], "#الاتحاد"),
+    (["ahli"], "#الأهلي"),
+    (["qadsiah", "qadisiyah", "qadsia", "qadisiya"], "#القادسية"),
 ]
 
 EVENT_SELECTOR = 'a[href*="/events/"]'
@@ -155,7 +156,7 @@ def parse_card(text):
 def club_tags(key):
     tags = []
     for variants, tag in CLUBS:
-        if any(v in key for v in variants):
+        if any(re.search(rf"(^|-){v}(-|$)", key) for v in variants):
             tags.append(tag)
     return tags
 
