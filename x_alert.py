@@ -19,6 +19,7 @@ x_alert.py — مراقب ويبوك السريع وينشر التنبيه في
   VIP_BOT_TOKEN توكن بوت VIP — إذا موجود يرسل التنبيه لقناة VIP أول
   VIP_CHAT_ID   رقم قناة VIP (افتراضي -1004418967399)
   VIP_HEAD_START كم ثانية تسبق VIP تغريدة X (افتراضي 90)
+  VIP_CATEGORIES true يرسل لـ VIP رسالة ثانية فيها كل الفئات وأسعارها
 """
 
 import os
@@ -47,6 +48,7 @@ MAX_POST_ATTEMPTS = 3
 VIP_BOT_TOKEN = os.getenv("VIP_BOT_TOKEN", "").strip()
 VIP_CHAT_ID = os.getenv("VIP_CHAT_ID", "-1004418967399").strip()
 VIP_HEAD_START = float(os.getenv("VIP_HEAD_START", "90"))
+VIP_CATEGORIES = os.getenv("VIP_CATEGORIES", "true").lower() == "true"
 
 # الأندية: كلمات تظهر في رابط المباراة  ->  الوسم
 CLUBS = [
@@ -252,27 +254,31 @@ def vip_text(tweet, url):
     return text
 
 
-def send_vip(text):
-    """يرسل التنبيه لقناة VIP قبل X. يرجع True إذا وصل."""
+def send_vip(text, reply_to=None):
+    """يرسل رسالة لقناة VIP. يرجع رقم الرسالة إذا وصلت."""
     if not VIP_BOT_TOKEN:
-        return False
+        return None
     if DRY_RUN:
         print("🧪 [VIP]\n" + text)
-        return True
-    body = json.dumps({"chat_id": VIP_CHAT_ID, "text": text}).encode("utf-8")
+        return 1
+    payload = {"chat_id": VIP_CHAT_ID, "text": text}
+    if reply_to:
+        payload["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{VIP_BOT_TOKEN}/sendMessage",
         data=body, headers={"Content-Type": "application/json"})
     for i in range(3):
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
-                if json.load(r).get("ok"):
-                    print("📣 وصل التنبيه لقناة VIP")
-                    return True
+                res = json.load(r)
+                if res.get("ok"):
+                    print("📣 وصلت الرسالة لقناة VIP")
+                    return res["result"]["message_id"]
         except Exception as e:
             print(f"⚠️ VIP محاولة {i + 1}: {e}")
         time.sleep(2)
-    return False
+    return None
 
 
 def flush_pending(pending):
@@ -291,6 +297,69 @@ def flush_pending(pending):
         else:
             print(f"🚫 تركت تغريدة المباراة بعد {MAX_POST_ATTEMPTS} محاولات: {key}")
     return left
+
+
+# يقرأ الفئات من صفحة المباراة: من نافذة "استكشف المزيد" إذا انفتحت، وإلا من قسم "أنواع التذاكر"
+CATS_JS = """
+() => {
+  let scope = document.querySelector('[role=dialog]');
+  if (!scope || !scope.querySelector('h3')) {
+    const hd = [...document.querySelectorAll('h2')].find(e => /أنواع التذاكر|Ticket types/i.test(e.innerText));
+    scope = hd;
+    for (let i = 0; scope && !scope.querySelector('h3') && i < 6; i++) scope = scope.parentElement;
+  }
+  if (!scope) return [];
+  return [...scope.querySelectorAll('h3')].map(h => {
+    let row = h;
+    for (let i = 0; i < 6 && row && !/\\d/.test(row.innerText.replace(h.innerText, '')); i++) row = row.parentElement;
+    if (!row) return [h.innerText.trim(), '', false];
+    const sar = !!row.querySelector('svg[viewBox^="0 0 1124"]');
+    return [h.innerText.trim(), row.innerText.replace(h.innerText, '').trim(), sar];
+  });
+}
+"""
+
+
+def fetch_categories(page, url):
+    """يفتح صفحة المباراة ويرجع [(الفئة, السعر بالريال)] مرتبة من الأرخص."""
+    det = None
+    try:
+        det = page.context.new_page()
+        det.goto(url, wait_until="domcontentloaded", timeout=20000)
+        det.get_by_text(re.compile("أنواع التذاكر|Ticket types", re.I)).first.wait_for(timeout=15000)
+        more = det.locator("button", has_text=re.compile("استكشف المزيد|Explore more|See more|View more", re.I))
+        if more.count():
+            more.first.click(timeout=5000)
+            det.wait_for_selector("[role=dialog] h3", timeout=5000)
+        rows = det.evaluate(CATS_JS)
+    except Exception as e:
+        print(f"⚠️ ما قدرت أقرأ الفئات: {e}")
+        return []
+    finally:
+        if det:
+            try:
+                det.close()
+            except Exception:
+                pass
+    cats = []
+    for name, raw, sar in rows:
+        nums = re.findall(r"\d[\d,٬]*(?:\.\d+)?", raw or "")
+        if not name or not nums:
+            continue
+        try:
+            val = float(nums[-1].replace(",", "").replace("٬", ""))
+        except ValueError:
+            continue
+        if "$" in raw or "USD" in raw.upper() or not sar:
+            val *= USD_TO_SAR  # سيرفرات GitHub بأمريكا تعرض بالدولار
+        cats.append((name, round(val)))
+    cats.sort(key=lambda c: c[1])
+    print(f"🎟️ لقيت {len(cats)} فئة")
+    return cats
+
+
+def categories_text(cats):
+    return "🎟️ الفئات والأسعار:\n" + "\n".join(f"• {n} — {p:,} ريال" for n, p in cats)
 
 
 def make_page(p):
@@ -412,7 +481,12 @@ def main():
                     tweet = build_tweet(info, tags, full_url(href))
                     print(f"✨ مباراة جديدة: {info['title']}  ({key})")
                     # VIP أول، وبعد VIP_HEAD_START ثانية ينشر في X
-                    send_vip(vip_text(tweet, full_url(href)))
+                    url_full = full_url(href)
+                    vip_id = send_vip(vip_text(tweet, url_full))
+                    if vip_id and VIP_CATEGORIES:
+                        cats = fetch_categories(page, url_full)
+                        if cats:
+                            send_vip(categories_text(cats), reply_to=vip_id)
                     seen.add(key)
                     new_count += 1
                     pending.append([time.time() + head_start(), key, tweet, 0])
