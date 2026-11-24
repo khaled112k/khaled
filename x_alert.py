@@ -10,7 +10,7 @@ x_alert.py — مراقب ويبوك السريع وينشر التنبيه في
 
 المتغيرات (Secrets / env):
   X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET   (مطلوبة)
-  TARGET_URLS   روابط الصفحات مفصولة بفاصلة (افتراضي: صفحة كرة القدم)
+  TARGET_URLS   روابط الصفحات مفصولة بفاصلة (افتراضي: صفحة كرة القدم + صفحة الاستكشاف، أول 7 بكل وحدة)
   POLL_SECONDS  الفاصل بين كل فحص بالثواني (افتراضي 12)
   RUN_MINUTES   مدة التشغيل قبل ما يطلع (افتراضي 340 = 5 ساعات و40 دقيقة)
   INCLUDE_LINK  true يحط رابط ويبوك بالتغريدة (أغلى: ~0.20$ بدل ~0.015$)
@@ -35,7 +35,7 @@ from playwright.sync_api import sync_playwright
 
 # ---------------- الإعدادات ----------------
 TARGET_URLS = [u.strip() for u in os.getenv(
-    "TARGET_URLS", "https://webook.com/ar/explore?tag=football").split(",") if u.strip()]
+    "TARGET_URLS", "https://webook.com/ar/explore?tag=football,https://webook.com/ar/explore").split(",") if u.strip()]
 POLL_SECONDS = float(os.getenv("POLL_SECONDS", "12"))
 RUN_MINUTES = float(os.getenv("RUN_MINUTES", "340"))
 INCLUDE_LINK = os.getenv("INCLUDE_LINK", "false").lower() == "true"
@@ -176,12 +176,30 @@ def club_tags(key):
 
 
 # ---------------- التغريدة ----------------
+# الديربيات: تصميم مميز للتغريدة فور نزول التذاكر
+DERBIES = [
+    ({"#الاتحاد", "#الأهلي"}, "ديربي جدة", "#ديربي_جدة"),
+    ({"#الهلال", "#النصر"}, "ديربي الرياض", "#ديربي_الرياض"),
+]
+
+
+def derby_of(tags):
+    for clubs, name, tag in DERBIES:
+        if clubs <= set(tags):
+            return name, tag
+    return None
+
+
 def build_tweet(info, tags, url):
     title = info["title"] or "مباراة جديدة"
     if len(title) > 110:
         title = title[:107] + "..."
 
-    lines = [f"🚨 نزلت تذاكر | {title}"]
+    derby = derby_of(tags)
+    if derby:
+        lines = [f"🔥🔥 {derby[0]} 🔥🔥\n🚨 نزلت تذاكر الديربي | {title}"]
+    else:
+        lines = [f"🚨 نزلت تذاكر | {title}"]
     when = " ".join(x for x in (info["date"], info["time"]) if x)
     if when:
         lines.append(f"📅 {when}")
@@ -189,11 +207,11 @@ def build_tweet(info, tags, url):
         lines.append(f"📍 {info['city']}")
     if info["price"]:
         lines.append(f"💰 تبدأ من {info['price']} ريال")
-    lines.append("⚡ متاحة الآن في ويبوك")
+    lines.append("⚡ الحق قبل لا تخلص! متاحة الآن في ويبوك" if derby else "⚡ متاحة الآن في ويبوك")
     if INCLUDE_LINK:
         lines.append(f"🔗 {url}")
 
-    hashtags = " ".join(tags + ["#دوري_روشن", "#تذاكر"])
+    hashtags = " ".join(([derby[1]] if derby else []) + tags + ["#دوري_روشن", "#تذاكر"])
     # سطر فاضي بين كل صف وصف
     text = "\n\n".join(lines) + "\n\n" + hashtags
 
@@ -405,29 +423,6 @@ def make_page(p):
     return browser, page
 
 
-# صفحة الاستكشاف تعرض 7 مباريات بس، والباقي يطلع بزر "عرض المزيد" (~80 مباراة)
-LOAD_ALL_JS = """
-async () => {
-  const count = () => document.querySelectorAll('a[href*="/events/"]').length;
-  const findBtn = () => [...document.querySelectorAll('button')]
-    .find(b => /^(عرض المزيد|Show more|Load more|View more)$/i.test(b.innerText.trim()));
-  let clicks = 0;
-  for (let i = 0; i < 40; i++) {
-    const b = findBtn();
-    if (!b) break;
-    const n = count();
-    b.click();
-    clicks++;
-    const s = Date.now();
-    while (count() === n && Date.now() - s < 4000) await new Promise(r => setTimeout(r, 100));
-    if (count() === n) break;
-  }
-  return clicks;
-}
-"""
-FULL_MARKER = "__full_scan_v1__"  # علامة إن المحفوظ صار يشمل كل المباريات مو بس أول 7
-
-
 def scan(page, url):
     """يرجع قائمة [(href, text)] أو None إذا الصفحة ما حمّلت."""
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -440,10 +435,6 @@ def scan(page, url):
             pass
         return None
     page.wait_for_timeout(600)  # ثانية صغيرة عشان تكمل البطاقات
-    try:
-        page.evaluate(LOAD_ALL_JS)  # نضغط "عرض المزيد" لين تطلع كل المباريات
-    except Exception as e:
-        print(f"⚠️ عرض المزيد: {e}")
     return page.eval_on_selector_all(
         EVENT_SELECTOR,
         "els => els.map(e => [e.getAttribute('href') || '', e.innerText || ''])",
@@ -463,11 +454,6 @@ def main():
     if first_run:
         seen = set()
         print("🆕 أول تشغيل: بحفظ المباريات الموجودة بدون نشر")
-    elif FULL_MARKER not in seen:
-        # أول مرة نشوف كل المباريات: نحفظ الموجود بدون نشر عشان ما ينشر ~70 مباراة قديمة كأنها جديدة
-        first_run = True
-        print("🆕 أول تشغيل مع كل المباريات: بحفظ الموجود بدون نشر")
-    absorbed = False  # صار عندنا فحص ناجح في وضع أول تشغيل
 
     attempts = {}  # key -> عدد محاولات النشر الفاشلة
     pending = []  # [موعد النشر في X, key, التغريدة, عدد المحاولات]
@@ -502,8 +488,6 @@ def main():
                         fails_in_row = 0
                     continue
                 fails_in_row = 0
-                if first_run and items:
-                    absorbed = True
 
                 new_count = 0
                 for href, text in items:
@@ -548,9 +532,8 @@ def main():
                     save_seen(seen)
 
             # ما ننهي "أول تشغيل" إلا إذا الصفحة حمّلت فعلاً ولقينا مباريات
-            if first_run and absorbed:
+            if first_run and seen:
                 first_run = False
-                seen.add(FULL_MARKER)
                 save_seen(seen)
                 print(f"💾 تم حفظ {len(seen)} مباراة موجودة. من الحين أي جديد ينتشر فوراً.")
 
