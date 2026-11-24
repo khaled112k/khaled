@@ -347,8 +347,9 @@ def flush_pending(pending):
 # يقرأ الفئات من صفحة المباراة: من نافذة "استكشف المزيد" إذا انفتحت، وإلا من قسم "أنواع التذاكر"
 CATS_JS = """
 () => {
-  let scope = document.querySelector('[role=dialog]');
-  if (!scope || !scope.querySelector('h3')) {
+  let scope = [...document.querySelectorAll('[role=dialog]')]
+    .find(d => /أنواع التذاكر|Ticket types/i.test(d.innerText) && d.querySelector('h3'));
+  if (!scope) {
     const hd = [...document.querySelectorAll('h2')].find(e => /أنواع التذاكر|Ticket types/i.test(e.innerText));
     scope = hd;
     for (let i = 0; scope && !scope.querySelector('h3') && i < 6; i++) scope = scope.parentElement;
@@ -365,6 +366,10 @@ CATS_JS = """
 """
 
 
+# ننتظر نافذة "أنواع التذاكر" بالذات (مو نافذة الكوكيز)
+DIALOG_READY_JS = "() => [...document.querySelectorAll('[role=dialog]')].some(d => /أنواع التذاكر|Ticket types/i.test(d.innerText) && d.querySelector('h3'))"
+
+
 def fetch_categories(page, url):
     """يفتح صفحة المباراة ويرجع [(الفئة, السعر بالريال)] مرتبة من الأرخص."""
     det = None
@@ -375,7 +380,7 @@ def fetch_categories(page, url):
         more = det.locator("button", has_text=re.compile("استكشف المزيد|Explore more|See more|View more", re.I))
         if more.count():
             more.first.evaluate("el => el.click()")  # ضغط من داخل الصفحة عشان النوافذ المنبثقة ما تمنعه
-            det.wait_for_selector("[role=dialog] h3", timeout=5000)
+            det.wait_for_function(DIALOG_READY_JS, timeout=8000)
         rows = det.evaluate(CATS_JS)
     except Exception as e:
         print(f"⚠️ ما قدرت أقرأ الفئات: {e}")
@@ -456,7 +461,7 @@ def fetch_snapshot(page, url):
             more = det.locator("button", has_text=re.compile("استكشف المزيد|Explore more|See more|View more", re.I))
             if more.count():
                 more.first.evaluate("el => el.click()")  # ضغط من داخل الصفحة عشان النوافذ المنبثقة ما تمنعه
-                det.wait_for_selector("[role=dialog] h3", timeout=5000)
+                det.wait_for_function(DIALOG_READY_JS, timeout=8000)
             rows = det.evaluate(CATS_JS)
     except Exception as e:
         print(f"⚠️ مراقبة الدفعات {url}: {e}")
@@ -473,12 +478,18 @@ def fetch_snapshot(page, url):
             "cats": parse_cat_rows(rows)}
 
 
+WATCH_VERSION = 2  # نغيّره إذا تغيرت طريقة القراءة عشان نبدأ من جديد بدون تنبيهات غلط
+
+
 def load_watch():
     try:
         with open(WATCH_FILE, encoding="utf-8") as f:
-            return json.load(f)
+            state = json.load(f)
+        if state.get("_v") == WATCH_VERSION:
+            return state
     except Exception:
-        return {}
+        pass
+    return {"_v": WATCH_VERSION}
 
 
 def save_watch(state):
