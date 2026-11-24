@@ -50,7 +50,9 @@ jobs:
       - name: Restore seen events
         uses: actions/cache/restore@v4
         with:
-          path: x_seen_events.json
+          path: |
+            x_seen_events.json
+            watch_state.json
           key: x-seen-${{ github.run_id }}
           restore-keys: |
             x-seen-
@@ -74,7 +76,9 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: x_seen_events.json
+          path: |
+            x_seen_events.json
+            watch_state.json
           key: x-seen-${{ github.run_id }}
 
       - name: Trigger next run
