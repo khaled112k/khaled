@@ -94,10 +94,42 @@ def save_state(state):
 
 
 # ---------------- ويبوك ----------------
+COOKIE_JS = r"""() => {
+  const dlgs = [...document.querySelectorAll('[role="dialog"]')].filter(d =>
+    d.querySelector('[form="cookie_consent_settings"], #cookie_consent_settings') ||
+    /cookie|كوكيز|ملفات تعريف/i.test(d.innerText || ''));
+  if (!dlgs.length) return 'none';
+  const btns = dlgs.flatMap(d => [...d.querySelectorAll('button')]);
+  const rej = btns.find(b => /رفض|الضرورية فقط|الأساسية فقط|Reject|Necessary only|Decline/i.test(b.innerText || ''));
+  if (rej) { rej.click(); return 'rejected'; }
+  dlgs.forEach(d => d.remove());
+  document.querySelectorAll('[data-radix-portal], [data-state="open"][data-aria-hidden], .fixed.inset-0').forEach(o => {
+    if (!o.querySelector('input')) o.remove(); });
+  document.body.style.pointerEvents = '';
+  return 'removed';
+}"""
+
+
+def dismiss_cookies(pg):
+    """يقفل نافذة الكوكيز (يختار الضروري فقط إذا لقاه، وإلا يشيل النافذة)."""
+    try:
+        r = pg.evaluate(COOKIE_JS)
+        if r != "none":
+            print(f"   🍪 نافذة الكوكيز: {r}")
+            pg.wait_for_timeout(800)
+            if r == "rejected":
+                pg.evaluate(COOKIE_JS)
+    except Exception as e:
+        print(f"   ⚠️ الكوكيز: {e}")
+
+
 def click_submit(pg):
     btn = pg.locator('button[type="submit"]')
     if btn.count():
-        btn.first.click(timeout=10000)
+        try:
+            btn.first.click(timeout=5000)
+        except Exception:
+            btn.first.evaluate("el => el.click()")
         return
     pg.locator("button", has_text=re.compile(
         "تسجيل الدخول|دخول|متابعة|التالي|Log in|Login|Continue", re.I)).first.click(timeout=10000)
@@ -111,15 +143,27 @@ def login(browser):
     try:
         pg.goto("https://webook.com/ar/login", wait_until="domcontentloaded", timeout=30000)
         pg.wait_for_timeout(3000)
+        dismiss_cookies(pg)
         email = pg.locator('input[type="email"], input[name*="email" i], '
                            'input[autocomplete="username"], input[autocomplete="email"]').first
         email.fill(WEBOOK_EMAIL, timeout=15000)
         pwd = pg.locator('input[type="password"]').first
         if not pwd.is_visible():
-            click_submit(pg)
+            email.press("Enter")
+            pg.wait_for_timeout(1500)
+            if not pwd.is_visible():
+                dismiss_cookies(pg)
+                click_submit(pg)
             pwd.wait_for(state="visible", timeout=15000)
         pwd.fill(WEBOOK_PASSWORD)
-        click_submit(pg)
+        pwd.press("Enter")
+        pg.wait_for_timeout(2500)
+        if "/login" in pg.url:
+            dismiss_cookies(pg)
+            try:
+                click_submit(pg)
+            except Exception:
+                pass
         pg.wait_for_timeout(7000)
         ok = "/login" not in pg.url
         if not ok:
@@ -147,6 +191,8 @@ def read_status(ctx, url):
     try:
         pg = ctx.new_page()
         pg.goto(url.rstrip("/") + "/book", wait_until="domcontentloaded", timeout=30000)
+        pg.wait_for_timeout(1500)
+        dismiss_cookies(pg)
         try:
             pg.wait_for_function(
                 "(w) => w.some(x => document.body && document.body.innerText.includes(x))",
