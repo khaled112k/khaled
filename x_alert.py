@@ -50,6 +50,9 @@ MAX_POST_ATTEMPTS = 3
 
 VIP_BOT_TOKEN = os.getenv("VIP_BOT_TOKEN", "").strip()
 VIP_CHAT_ID = os.getenv("VIP_CHAT_ID", "-1004418967399").strip()
+# قناة الأصحاب المجانية (نفس تنبيه المباراة الجديدة + الفئات، بنفس وقت VIP)
+FRIENDS_BOT_TOKEN = os.getenv("FRIENDS_BOT_TOKEN", "").strip()
+FRIENDS_CHAT_ID = os.getenv("FRIENDS_CHAT_ID", "").strip()
 VIP_HEAD_START = float(os.getenv("VIP_HEAD_START", "90"))
 VIP_CATEGORIES = os.getenv("VIP_CATEGORIES", "true").lower() == "true"
 
@@ -342,6 +345,33 @@ def send_vip(text, reply_to=None, chat_id=None):
                     return res["result"]["message_id"]
         except Exception as e:
             print(f"⚠️ VIP محاولة {i + 1}: {e}")
+        time.sleep(2)
+    return None
+
+
+def send_friends(text, reply_to=None):
+    """يرسل لقناة الأصحاب. يرجع رقم الرسالة إذا وصلت."""
+    if not (FRIENDS_BOT_TOKEN and FRIENDS_CHAT_ID):
+        return None
+    if DRY_RUN:
+        print("🧪 [أصحاب]\n" + text)
+        return 1
+    payload = {"chat_id": FRIENDS_CHAT_ID, "text": text}
+    if reply_to:
+        payload["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{FRIENDS_BOT_TOKEN}/sendMessage",
+        data=body, headers={"Content-Type": "application/json"})
+    for i in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                res = json.load(r)
+                if res.get("ok"):
+                    print("📣 وصلت الرسالة لقناة الأصحاب")
+                    return res["result"]["message_id"]
+        except Exception as e:
+            print(f"⚠️ الأصحاب محاولة {i + 1}: {e}")
         time.sleep(2)
     return None
 
@@ -814,10 +844,16 @@ def main():
                     # VIP أول، وبعد VIP_HEAD_START ثانية ينشر في X
                     url_full = full_url(href)
                     vip_id = send_vip(vip_text(tweet, url_full))
-                    if vip_id and VIP_CATEGORIES:
+                    fr_text = tweet if url_full in tweet else tweet + "\n\n" + url_full
+                    fr_id = send_friends(fr_text)
+                    if (vip_id or fr_id) and VIP_CATEGORIES:
                         cats = fetch_categories(page, url_full)
                         if cats:
-                            send_vip(categories_text(cats), reply_to=vip_id)
+                            ct = categories_text(cats)
+                            if vip_id:
+                                send_vip(ct, reply_to=vip_id)
+                            if fr_id:
+                                send_friends(ct, reply_to=fr_id)
                     seen.add(key)
                     new_count += 1
                     pending.append([time.time() + head_start(), key, tweet, 0])
