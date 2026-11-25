@@ -64,13 +64,15 @@ WATCH_FILE = "watch_state.json"
 # =====================================
 
 # الأندية: كلمات تظهر في رابط المباراة  ->  الوسم
-# نطابق الاسم ككلمة كاملة بين الشرطات، بـ al- أو بدونها (مثال: ittihad-vs-ahli)
+# الأندية: (أسماء بالإنجليزي تظهر في الرابط، أسماء بالعربي تظهر في العنوان، الوسم)
+# الإنجليزي: كلمة كاملة بين الشرطات بـ al- أو بدونها (ittihad-vs-ahli)
+# العربي: الاسم كامل بـ"ال" (عشان "مصعب نصر" ما تنحسب النصر)
 CLUBS = [
-    (["hilal"], "#الهلال"),
-    (["nassr", "nasr"], "#النصر"),
-    (["ittihad", "itihad"], "#الاتحاد"),
-    (["ahli"], "#الأهلي"),
-    (["qadsiah", "qadisiyah", "qadsia", "qadisiya"], "#القادسية"),
+    (["hilal"], ["الهلال"], "#الهلال"),
+    (["nassr"], ["النصر"], "#النصر"),
+    (["ittihad", "itihad"], ["الاتحاد"], "#الاتحاد"),
+    (["ahli"], ["الأهلي", "الاهلي"], "#الأهلي"),
+    (["qadsiah", "qadisiyah", "qadsia", "qadisiya"], ["القادسية"], "#القادسية"),
 ]
 
 EVENT_SELECTOR = 'a[href*="/events/"]'
@@ -179,12 +181,18 @@ def is_excluded(key, text):
     return any(w in blob for w in EXCLUDE_WORDS)
 
 
-def club_tags(key):
+def club_tags(key, text=""):
     tags = []
-    for variants, tag in CLUBS:
-        if any(re.search(rf"(^|-){v}(-|$)", key) for v in variants):
+    for en, ar, tag in CLUBS:
+        if any(re.search(rf"(^|-){v}(-|$)", key) for v in en) or \
+                any(re.search(rf"(?<![\u0600-\u06FF]){w}(?![\u0600-\u06FF])", text or "") for w in ar):
             tags.append(tag)
     return tags
+
+
+def is_match(key, text):
+    """مباراة فعلاً (فيها vs بالرابط أو ضد بالعنوان) مو حفلة أو مسرحية."""
+    return "-vs-" in key or re.search(r"(^|\s)ضد(\s|$)", text or "") is not None
 
 
 # ---------------- التغريدة ----------------
@@ -649,9 +657,13 @@ def main():
                             post_to_x(build_tweet(parse_card(text), club_tags(key), full_url(href)))
                         continue
 
-                    tags = club_tags(key)
+                    tags = club_tags(key, text)
                     if not tags and not ALL_CLUBS:
                         seen.add(key)  # مو من الأندية المطلوبة
+                        continue
+                    if not is_match(key, text):
+                        seen.add(key)  # مو مباراة (مثل فعالية فيها اسم يشبه اسم نادي)
+                        print(f"⏭️ تجاهلت (مو مباراة): {key}")
                         continue
                     if is_excluded(key, text):
                         seen.add(key)  # بطولة مستثناة (تحت 21 / نسائية)
