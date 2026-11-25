@@ -407,7 +407,12 @@ CATS_JS = """
   if (!scope) return [];
   return [...scope.querySelectorAll('h3')].map(h => {
     let row = h;
-    for (let i = 0; i < 6 && row && !/\\d/.test(row.innerText.replace(h.innerText, '')); i++) row = row.parentElement;
+    for (let i = 0; i < 6; i++) {
+      if (row.querySelector('svg[viewBox^="0 0 1124"]') || /\\$|USD/.test(row.innerText)) break;
+      const up = row.parentElement;
+      if (!up || up.querySelectorAll('h3').length > 1) break;
+      row = up;
+    }
     if (!row) return [h.innerText.trim(), '', false];
     const sar = !!row.querySelector('svg[viewBox^="0 0 1124"]');
     return [h.innerText.trim(), row.innerText.replace(h.innerText, '').trim(), sar];
@@ -415,6 +420,19 @@ CATS_JS = """
 }
 """
 
+
+# يضغط "عرض المزيد" داخل نافذة الفئات (المباريات الكبيرة فيها فئات كثيرة)
+MORE_JS = r"""
+() => {
+  const d = [...document.querySelectorAll('[role=dialog]')].find(x => /أنواع التذاكر|Ticket types/i.test(x.innerText));
+  if (!d) return false;
+  const m = [...d.querySelectorAll('button,a,span,div,p')].find(e => e.children.length === 0 &&
+    /^(عرض المزيد|Show more|View more|Load more)$/i.test((e.innerText || '').trim()));
+  if (!m) return false;
+  m.click();
+  return true;
+}
+"""
 
 # ننتظر نافذة "أنواع التذاكر" بالذات (مو نافذة الكوكيز)
 DIALOG_READY_JS = "() => [...document.querySelectorAll('[role=dialog]')].some(d => /أنواع التذاكر|Ticket types/i.test(d.innerText) && d.querySelector('h3'))"
@@ -431,6 +449,16 @@ def fetch_categories(page, url):
         if more.count():
             more.first.evaluate("el => el.click()")  # ضغط من داخل الصفحة عشان النوافذ المنبثقة ما تمنعه
             det.wait_for_function(DIALOG_READY_JS, timeout=8000)
+            for _ in range(25):
+                before = det.locator("[role=dialog] h3").count()
+                if not det.evaluate(MORE_JS):
+                    det.wait_for_timeout(1200)
+                    if not det.evaluate(MORE_JS):
+                        break
+                for _ in range(10):
+                    det.wait_for_timeout(300)
+                    if det.locator("[role=dialog] h3").count() != before:
+                        break
         rows = det.evaluate(CATS_JS)
     except Exception as e:
         print(f"⚠️ ما قدرت أقرأ الفئات: {e}")
@@ -450,7 +478,10 @@ def fetch_categories(page, url):
             val = float(nums[-1].replace(",", "").replace("٬", ""))
         except ValueError:
             continue
-        if "$" in raw or "USD" in raw.upper() or not sar:
+        usd = "$" in raw or "USD" in raw.upper()
+        if not (sar or usd):
+            continue  # ما لقينا سعر الفئة (لا ريال ولا دولار)
+        if usd:
             val *= USD_TO_SAR  # سيرفرات GitHub بأمريكا تعرض بالدولار
         cats.append((name, round(val)))
     cats.sort(key=lambda c: c[1])
@@ -458,8 +489,35 @@ def fetch_categories(page, url):
     return cats
 
 
+CAT_DIRS = r"(?:الجنوبية|الشمالية|الجنوبي|الشمالي|الشرقية|الغربية|جنوب|شمال|شرق|غرب)"
+
+
+def cat_group(name):
+    """يجمع الفئات المتشابهة: G1..G12 -> G ، فانز لاونج A1 -> فانز لاونج ، سبورتس لاونج الجنوبية -> سبورتس لاونج"""
+    n = name.strip()
+    m = re.match(r"^([A-Za-z])\d+$", n)
+    if m:
+        return m.group(1).upper()
+    n = re.sub(r"\s+(?:[A-Za-z]\s*)?\d[\d\s\-A-Za-z]*$", "", n)
+    n = re.sub(r"\s+" + CAT_DIRS + r"$", "", n).strip()
+    return n or name.strip()
+
+
 def categories_text(cats):
-    return "🎟️ الفئات والأسعار:\n" + "\n".join(f"• {n} — {p:,} ريال" for n, p in cats)
+    """كل مجموعة فئات بأرخص سعر فيها، واللي سعرهم واحد بسطر واحد، مرتبة من الأرخص."""
+    best, order = {}, []
+    for name, p in cats:
+        g = cat_group(name)
+        if g not in best:
+            order.append(g)
+            best[g] = p
+        else:
+            best[g] = min(best[g], p)
+    by_price = {}
+    for g in order:
+        by_price.setdefault(best[g], []).append(g)
+    lines = [f"{' · '.join(gs)} — {p:,} ﷼" for p, gs in sorted(by_price.items())]
+    return ("🎟️ الفئات وأرخص سعر لكل وحدة:\n\n" + "\n".join(lines))[:4000]
 
 
 # ---------------- مراقبة الدفعات ----------------
