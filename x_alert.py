@@ -63,6 +63,18 @@ WATCH_EVERY = float(os.getenv("WATCH_EVERY", "60"))  # كل كم ثانية يف
 WATCH_FILE = "watch_state.json"
 # =====================================
 
+# ======== مراقبة انتهاء الأولوية (يحتاج حساب ويبوك احتياطي بدون عضوية) ========
+# روابط صفحات المباريات (مو صفحة الحجز) مفصولة بفاصلة. السكربت يفتح /book لكل وحدة.
+PRIORITY_URLS = [u.strip() for u in os.getenv(
+    "PRIORITY_URLS",
+    "https://webook.com/ar/sa/ruh/sports-event/events/rsl-26-27-nassr-vs-al-hilal-m7g1a8l6z5",
+).split(",") if u.strip()]
+PRIORITY_EVERY = float(os.getenv("PRIORITY_EVERY", "120"))  # كل كم ثانية نفحص
+WEBOOK_EMAIL = os.getenv("WEBOOK_EMAIL", "").strip()
+WEBOOK_PASSWORD = os.getenv("WEBOOK_PASSWORD", "")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "881479054")  # تنبيهات الأعطال توصلك انت بس
+# =====================================
+
 # الأندية: كلمات تظهر في رابط المباراة  ->  الوسم
 # الأندية: (أسماء بالإنجليزي تظهر في الرابط، أسماء بالعربي تظهر في العنوان، الوسم)
 # الإنجليزي: كلمة كاملة بين الشرطات بـ al- أو بدونها (ittihad-vs-ahli)
@@ -307,14 +319,14 @@ def vip_text(tweet, url):
     return text
 
 
-def send_vip(text, reply_to=None):
+def send_vip(text, reply_to=None, chat_id=None):
     """يرسل رسالة لقناة VIP. يرجع رقم الرسالة إذا وصلت."""
     if not VIP_BOT_TOKEN:
         return None
     if DRY_RUN:
         print("🧪 [VIP]\n" + text)
         return 1
-    payload = {"chat_id": VIP_CHAT_ID, "text": text}
+    payload = {"chat_id": chat_id or VIP_CHAT_ID, "text": text}
     if reply_to:
         payload["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
     body = json.dumps(payload).encode("utf-8")
@@ -545,6 +557,130 @@ def watch_check(page, state):
             send_vip(batch_text(snap, url, new_cats, reopened))
 
 
+# ---------------- مراقبة انتهاء الأولوية ----------------
+PRIORITY_WORDS = ["الحجز المبكر", "العضويات الموسمية", "أولويتك بالحجز"]
+OPEN_WORDS = ["اختر التذاكر", "فحص أمني", "تفاصيل الحجز", "اختر الفريق", "اختر مقاعدك"]
+
+
+def click_submit(pg):
+    btn = pg.locator('button[type="submit"]')
+    if btn.count():
+        btn.first.click(timeout=10000)
+        return
+    pg.locator("button", has_text=re.compile("تسجيل الدخول|دخول|متابعة|التالي|Log in|Login|Continue", re.I)).first.click(timeout=10000)
+
+
+def webook_login(browser):
+    """يسجل دخول بالحساب الاحتياطي. ما يتجاوز أي تحقق: إذا طلع تحقق يفشل ويبلغك."""
+    ctx = browser.new_context(locale="ar-SA")
+    pg = ctx.new_page()
+    try:
+        pg.goto("https://webook.com/ar/login", wait_until="domcontentloaded", timeout=30000)
+        pg.wait_for_timeout(3000)
+        email = pg.locator('input[type="email"], input[name*="email" i], input[autocomplete="username"], input[autocomplete="email"]').first
+        email.fill(WEBOOK_EMAIL, timeout=15000)
+        pwd = pg.locator('input[type="password"]').first
+        if not pwd.is_visible():
+            click_submit(pg)
+            pwd.wait_for(state="visible", timeout=15000)
+        pwd.fill(WEBOOK_PASSWORD)
+        click_submit(pg)
+        pg.wait_for_timeout(7000)
+        ok = "/login" not in pg.url
+    except Exception as e:
+        print(f"⚠️ تسجيل الدخول: {e}")
+        ok = False
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
+    if not ok:
+        try:
+            ctx.close()
+        except Exception:
+            pass
+        return None
+    print("🔑 سجلت دخول ويبوك (الحساب الاحتياطي)")
+    return ctx
+
+
+def read_priority(ctx, url):
+    """يرجع (الحالة, العنوان): priority / open / logged_out / None (مو واضح) / error."""
+    pg = None
+    try:
+        pg = ctx.new_page()
+        pg.goto(url.rstrip("/") + "/book", wait_until="domcontentloaded", timeout=30000)
+        pg.wait_for_timeout(8000)
+        if "/login" in pg.url:
+            return "logged_out", ""
+        body = pg.inner_text("body")
+    except Exception as e:
+        print(f"⚠️ مراقبة الأولوية {url}: {e}")
+        return "error", ""
+    finally:
+        if pg:
+            try:
+                pg.close()
+            except Exception:
+                pass
+    m = re.search(r"[^\n]*(?:^|\s)ضد(?:\s|$)[^\n]*", body)
+    title = m.group(0).strip() if m else ""
+    if any(w in body for w in PRIORITY_WORDS):
+        return "priority", title
+    if any(w in body for w in OPEN_WORDS):
+        return "open", title
+    return None, title
+
+
+def priority_text(title, url):
+    derby = derby_of(club_tags(event_key(url), title))
+    head = f"🔥🔥 {derby[0]} — انتهت الأولوية 🔥🔥" if derby else "🔓 انتهت الأولوية"
+    lines = [head]
+    if title:
+        lines.append(f"🏟️ {title}")
+    lines += ["✅ الحجز صار متاح للجميع الحين", "⚡ الحق قبل لا تخلص!", f"🔗 {url}"]
+    return "\n\n".join(lines)
+
+
+def priority_check(browser, state, holder):
+    if not (WEBOOK_EMAIL and WEBOOK_PASSWORD):
+        if not holder.get("no_creds"):
+            print("ℹ️ مراقبة الأولوية متوقفة: ما فيه WEBOOK_EMAIL / WEBOOK_PASSWORD")
+            holder["no_creds"] = True
+        return
+    if holder.get("ctx") is None:
+        holder["ctx"] = webook_login(browser)
+        if holder["ctx"] is None:
+            if not holder.get("warned"):
+                send_vip("⚠️ ما قدرت أسجل دخول ويبوك بالحساب الاحتياطي، فمراقبة الأولوية متوقفة. "
+                         "تأكد من الإيميل وكلمة المرور في GitHub Secrets.", chat_id=ADMIN_CHAT_ID)
+                holder["warned"] = True
+            return
+        holder["warned"] = False
+    for url in PRIORITY_URLS:
+        status, title = read_priority(holder["ctx"], url)
+        if status in ("logged_out", "error"):
+            try:
+                holder["ctx"].close()
+            except Exception:
+                pass
+            holder["ctx"] = None  # نعيد تسجيل الدخول بالفحص الجاي
+            return
+        if status is None:
+            continue
+        key = "prio:" + url
+        prev = state.get(key)
+        if prev != status:
+            state[key] = status
+            save_watch(state)
+        if prev is None:
+            print(f"👀 بدأت أراقب الأولوية: {title or url} — الحالة: {'أولوية' if status == 'priority' else 'متاح للجميع'}")
+        elif prev == "priority" and status == "open":
+            print(f"🔓 انتهت الأولوية: {title or url}")
+            send_vip(priority_text(title, url))
+
+
 def make_page(p):
     browser = p.chromium.launch(
         headless=True,
@@ -609,6 +745,8 @@ def main():
     pending = []  # [موعد النشر في X, key, التغريدة, عدد المحاولات]
     watch_state = load_watch()
     next_watch = 0
+    prio = {}  # جلسة الحساب الاحتياطي
+    next_prio = 0
     deadline = time.time() + RUN_MINUTES * 60
     fails_in_row = 0
     loop = 0
@@ -697,6 +835,9 @@ def main():
             if WATCH_URLS and time.time() >= next_watch:
                 watch_check(page, watch_state)
                 next_watch = time.time() + WATCH_EVERY
+            if PRIORITY_URLS and time.time() >= next_prio:
+                priority_check(browser, watch_state, prio)
+                next_prio = time.time() + PRIORITY_EVERY
 
             took = time.time() - t0
             if loop % 20 == 1:
