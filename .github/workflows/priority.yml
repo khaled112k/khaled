@@ -1,0 +1,99 @@
+name: Webook Priority Alerts
+
+# يشتغل باستمرار: كل تشغيل يراقب ~5 ساعات و40 دقيقة ثم يعيد تشغيل نفسه.
+# الجدولة كل 30 دقيقة احتياط لو انقطعت السلسلة (ما يصير تشغيلين بنفس الوقت بسبب concurrency).
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'تجربة بدون نشر (true) أو تشغيل حقيقي (false)'
+        required: false
+        default: 'false'
+      run_minutes:
+        description: 'مدة التشغيل بالدقائق'
+        required: false
+        default: '340'
+      forget:
+        description: 'للتجربة: مباريات تنحذف من المحفوظ عشان يغرد فيها (مثال: al-ahli-vs-al-taawoun)'
+        required: false
+        default: ''
+  # الجدولة الاحتياطية: لو انقطعت السلسلة يرجع يشتغل خلال 30 دقيقة
+  schedule:
+    - cron: '*/30 * * * *'
+
+concurrency:
+  group: webook-priority
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write   # عشان يقدر يعيد تشغيل نفسه
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    # صورة جاهزة فيها كروميوم وكل ملحقاته = ما نضيع دقيقتين تثبيت كل مرة
+    container:
+      image: mcr.microsoft.com/playwright/python:v1.58.0-noble
+      options: --ipc=host
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: "utf-8"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Python packages
+        run: pip install --no-cache-dir --break-system-packages "playwright==1.58.0"
+
+      - name: Restore seen events
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            priority_state.json
+          key: prio-state-${{ github.run_id }}
+          restore-keys: |
+            prio-state-
+
+      - name: Run priority monitor
+        env:
+          VIP_BOT_TOKEN: ${{ secrets.VIP_BOT_TOKEN }}
+          WEBOOK_EMAIL: ${{ secrets.WEBOOK_EMAIL }}
+          WEBOOK_PASSWORD: ${{ secrets.WEBOOK_PASSWORD }}
+          PRIORITY_EVERY: "60"
+          RUN_MINUTES: ${{ github.event.inputs.run_minutes || '340' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: python priority_alert.py
+
+      - name: Save seen events
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            priority_state.json
+          key: prio-state-${{ github.run_id }}
+
+      - name: Trigger next run
+        # ما يعيد تشغيل نفسه في وضع التجربة أو إذا أوقفته يدوياً
+        if: ${{ !cancelled() && github.event.inputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+        run: |
+          python - <<'EOF'
+          import os, json, urllib.request
+          url = f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/priority.yml/dispatches"
+          req = urllib.request.Request(
+              url,
+              data=json.dumps({"ref": os.environ["REF"]}).encode(),
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                  "Accept": "application/vnd.github+json",
+              },
+          )
+          with urllib.request.urlopen(req) as r:
+              print("next run triggered:", r.status)
+          EOF
