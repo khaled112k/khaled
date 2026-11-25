@@ -44,6 +44,9 @@ WEBOOK_PASSWORD = os.getenv("WEBOOK_PASSWORD", "")
 VIP_BOT_TOKEN = os.getenv("VIP_BOT_TOKEN", "").strip()
 VIP_CHAT_ID = os.getenv("VIP_CHAT_ID", "-1004418967399").strip()
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "881479054").strip()
+# قناة الأصحاب المجانية (نفس تنبيه انتهاء الأولوية)
+FRIENDS_BOT_TOKEN = os.getenv("FRIENDS_BOT_TOKEN", "").strip()
+FRIENDS_CHAT_ID = os.getenv("FRIENDS_CHAT_ID", "").strip()
 STATE_FILE = "priority_state.json"
 
 PRIORITY_WORDS = ["الحجز المبكر", "العضويات الموسمية", "أولويتك بالحجز"]
@@ -56,14 +59,15 @@ DERBIES = [
 
 
 # ---------------- تيليجرام ----------------
-def send(text, chat_id=None):
+def send(text, chat_id=None, token=None):
     chat = chat_id or VIP_CHAT_ID
-    if DRY_RUN or not VIP_BOT_TOKEN:
+    token = token or VIP_BOT_TOKEN
+    if DRY_RUN or not token:
         print(f"🧪 [{chat}]\n{text}")
         return True
     body = json.dumps({"chat_id": chat, "text": text}).encode("utf-8")
     req = urllib.request.Request(
-        f"https://api.telegram.org/bot{VIP_BOT_TOKEN}/sendMessage",
+        f"https://api.telegram.org/bot{token}/sendMessage",
         data=body, headers={"Content-Type": "application/json"})
     for i in range(3):
         try:
@@ -285,7 +289,10 @@ def main():
                     print(f"👀 بدأت أراقب: {title or url} — {'أولوية' if status == 'priority' else 'متاح للجميع'}")
                 elif prev == "priority" and status == "open":
                     print(f"🔓 انتهت الأولوية: {title or url}")
-                    send(message(title, url))
+                    msg = message(title, url)
+                    send(msg)
+                    if FRIENDS_BOT_TOKEN and FRIENDS_CHAT_ID:
+                        send(msg, chat_id=FRIENDS_CHAT_ID, token=FRIENDS_BOT_TOKEN)
 
             took = time.time() - t0
             if loop % 30 == 1:
