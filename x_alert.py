@@ -67,7 +67,7 @@ WATCH_FILE = "watch_state.json"
 # روابط صفحات المباريات (مو صفحة الحجز) مفصولة بفاصلة. السكربت يفتح /book لكل وحدة.
 PRIORITY_URLS = [u.strip() for u in os.getenv(
     "PRIORITY_URLS",
-    "https://webook.com/ar/sa/ruh/sports-event/events/rsl-26-27-nassr-vs-al-hilal-m7g1a8l6z5",
+    "",  # الأولوية صارت في priority_alert.py المستقل
 ).split(",") if u.strip()]
 PRIORITY_EVERY = float(os.getenv("PRIORITY_EVERY", "120"))  # كل كم ثانية نفحص
 WEBOOK_EMAIL = os.getenv("WEBOOK_EMAIL", "").strip()
