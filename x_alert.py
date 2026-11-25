@@ -441,10 +441,16 @@ DIALOG_READY_JS = "() => [...document.querySelectorAll('[role=dialog]')].some(d 
 def fetch_categories(page, url):
     """يفتح صفحة المباراة ويرجع [(الفئة, السعر بالريال)] مرتبة من الأرخص."""
     det = None
+    LAST_PAGE.clear()
     try:
         det = page.context.new_page()
         det.goto(url, wait_until="domcontentloaded", timeout=20000)
         det.get_by_text(re.compile("أنواع التذاكر|Ticket types", re.I)).first.wait_for(timeout=15000)
+        try:
+            LAST_PAGE["title"] = (det.locator("h1").first.inner_text(timeout=3000) or "").strip()
+            LAST_PAGE["venue"] = det.inner_text("body", timeout=3000)
+        except Exception:
+            pass
         more = det.locator("button", has_text=re.compile("استكشف المزيد|Explore more|See more|View more", re.I))
         if more.count():
             more.first.evaluate("el => el.click()")  # ضغط من داخل الصفحة عشان النوافذ المنبثقة ما تمنعه
@@ -487,6 +493,66 @@ def fetch_categories(page, url):
     cats.sort(key=lambda c: c[1])
     print(f"🎟️ لقيت {len(cats)} فئة")
     return cats
+
+
+LAST_PAGE = {}  # عنوان وملعب آخر صفحة مباراة قرينا فئاتها
+
+
+def price_map_png(cats, tags):
+    """صورة خريطة الأول بارك بأسعار الفئات (ترجع None للملاعب الثانية أو إذا صار خطأ)."""
+    try:
+        import price_map
+        if not price_map.is_awwal(LAST_PAGE.get("venue", "")):
+            return None
+        best = {}
+        for name, p in cats:
+            g = cat_group(name)
+            best[g] = min(best.get(g, p), p)
+        d = derby_of(tags)
+        png = price_map.render(best, LAST_PAGE.get("title", ""), d[0] if d else None)
+        print("🗺️ جهزت صورة خريطة الأسعار")
+        return png
+    except Exception as e:
+        print(f"⚠️ ما قدرت أسوي صورة الخريطة: {e}")
+        return None
+
+
+def tg_photo(token, chat, png, caption="", reply_to=None):
+    """يرسل صورة لتيليجرام. يرجع True إذا وصلت."""
+    boundary = "----khaled" + str(random.randint(10**8, 10**9))
+    fields = {"chat_id": str(chat)}
+    if caption:
+        fields["caption"] = caption
+    if reply_to:
+        fields["reply_parameters"] = json.dumps({"message_id": reply_to, "allow_sending_without_reply": True})
+    body = b""
+    for k, v in fields.items():
+        body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").encode("utf-8")
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"prices.png\"\r\n"
+             "Content-Type: image/png\r\n\r\n").encode("utf-8") + png + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendPhoto", data=body,
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    for i in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                if json.load(r).get("ok"):
+                    print("🖼️ وصلت صورة الخريطة")
+                    return True
+        except Exception as e:
+            print(f"⚠️ صورة الخريطة محاولة {i + 1}: {e}")
+        time.sleep(2)
+    return False
+
+
+def send_cats(token, chat, send_fn, ct, png, reply_to):
+    """يرسل الفئات: صورة الخريطة مع النص إذا متوفرة، وإلا النص بس."""
+    if png and token and chat and not DRY_RUN:
+        short = len(ct) <= 1024
+        if tg_photo(token, chat, png, ct if short else "", reply_to):
+            if not short:
+                send_fn(ct, reply_to=reply_to)
+            return
+    send_fn(ct, reply_to=reply_to)
 
 
 CAT_DIRS = r"(?:الجنوبية|الشمالية|الجنوبي|الشمالي|الشرقية|الغربية|جنوب|شمال|شرق|غرب)"
@@ -908,10 +974,11 @@ def main():
                         cats = fetch_categories(page, url_full)
                         if cats:
                             ct = categories_text(cats)
+                            png = price_map_png(cats, tags)
                             if vip_id:
-                                send_vip(ct, reply_to=vip_id)
+                                send_cats(VIP_BOT_TOKEN, VIP_CHAT_ID, send_vip, ct, png, vip_id)
                             if fr_id:
-                                send_friends(ct, reply_to=fr_id)
+                                send_cats(FRIENDS_BOT_TOKEN, FRIENDS_CHAT_ID, send_friends, ct, png, fr_id)
                     seen.add(key)
                     new_count += 1
                     pending.append([time.time() + head_start(), key, tweet, 0])
