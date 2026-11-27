@@ -18,8 +18,9 @@ on:
         required: false
         default: ''
   # الجدولة الاحتياطية: لو انقطعت السلسلة يرجع يشتغل خلال 30 دقيقة
-  schedule:
-    - cron: '*/30 * * * *'
+  # موقف مؤقتاً (ما فيه مباريات أولوية): رجّع السطرين تحت عشان يرجع يشتغل تلقائي
+  # schedule:
+  #   - cron: '*/30 * * * *'
 
 concurrency:
   group: webook-priority
@@ -78,7 +79,7 @@ jobs:
 
       - name: Trigger next run
         # ما يعيد تشغيل نفسه في وضع التجربة أو إذا أوقفته يدوياً
-        if: ${{ !cancelled() && github.event.inputs.dry_run != 'true' }}
+        if: ${{ false && (!cancelled() && github.event.inputs.dry_run != 'true') }}  # موقف مؤقتاً
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
