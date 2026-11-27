@@ -60,7 +60,8 @@ VIP_CATEGORIES = os.getenv("VIP_CATEGORIES", "true").lower() == "true"
 # حط روابط صفحات المباريات اللي تبي تراقب دفعاتها (مفصولة بفاصلة). غيّرها متى ما بغيت.
 WATCH_URLS = [u.strip() for u in os.getenv(
     "WATCH_URLS",
-    "https://webook.com/ar/sa/jed/sports-event/events/rsl-26-27-the-jeddah-derby-ittihad-vs-ahli",
+    "https://webook.com/ar/sa/jed/sports-event/events/rsl-26-27-the-jeddah-derby-ittihad-vs-ahli,"
+    "https://webook.com/ar/sa/ruh/sports-event/events/rsl-26-27-nassr-vs-al-hilal-m7g1a8l6z5",
 ).split(",") if u.strip()]
 WATCH_EVERY = float(os.getenv("WATCH_EVERY", "60"))  # كل كم ثانية يفحص صفحات المراقبة
 WATCH_FILE = "watch_state.json"
