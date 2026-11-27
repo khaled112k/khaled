@@ -130,6 +130,16 @@ def full_url(href):
     return href if href.startswith("http") else f"https://webook.com{href}"
 
 
+def match_sig(info):
+    """بصمة المباراة (العنوان + التاريخ) عشان ما ننبّه مرتين لو ويبوك نشرها برابطين."""
+    title = (info or {}).get("title", "")
+    date = (info or {}).get("date", "")
+    if not title or not date:
+        return ""
+    norm = lambda x: re.sub(r"[\s\-–_.,:/]+", "", x.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")))
+    return "sig:" + norm(title) + "|" + norm(date)
+
+
 def parse_card(text):
     """
     مثال النص:
@@ -560,11 +570,13 @@ CAT_DIRS = r"(?:الجنوبية|الشمالية|الجنوبي|الشمالي|
 
 def cat_group(name):
     """يجمع الفئات المتشابهة: G1..G12 -> G ، فانز لاونج A1 -> فانز لاونج ، سبورتس لاونج الجنوبية -> سبورتس لاونج"""
-    n = name.strip()
+    n = re.sub(r"\s*-?\s*\([^)]*\)", " ", name)        # CAT 3 - (E1) Away -> CAT 3 Away
+    n = re.sub(r"\s+", " ", n).strip()
     m = re.match(r"^([A-Za-z])\d+$", n)
     if m:
         return m.group(1).upper()
-    n = re.sub(r"\s+(?:[A-Za-z]\s*)?\d[\d\s\-A-Za-z]*$", "", n)
+    # نشيل الترقيم بس إذا كان حرف ورقم (A1 / N 1 - A)، وCAT 4 تبقى مثل ما هي
+    n = re.sub(r"\s+(?:[A-Za-z]\d+|[A-Za-z]\s+\d[\d\s\-A-Za-z]*)$", "", n)
     n = re.sub(r"\s+" + CAT_DIRS + r"$", "", n).strip()
     return n or name.strip()
 
@@ -943,6 +955,9 @@ def main():
 
                     if first_run:
                         seen.add(key)
+                        sig = match_sig(parse_card(text))
+                        if sig:
+                            seen.add(sig)
                         # في وضع التجربة: نعرض شكل التغريدة لأول 3 مباريات من الأندية
                         if DRY_RUN and previews < 3 and (club_tags(key) or ALL_CLUBS):
                             previews += 1
@@ -963,6 +978,13 @@ def main():
                         continue
 
                     info = parse_card(text)
+                    sig = match_sig(info)
+                    if re.search(r"-dup\d*$", key) or (sig and sig in seen):
+                        seen.add(key)  # نسخة مكررة من نفس المباراة (ويبوك أحياناً ينشر المباراة مرتين)
+                        print(f"⏭️ تجاهلت (مكررة): {key}")
+                        continue
+                    if sig:
+                        seen.add(sig)
                     tweet = build_tweet(info, tags, full_url(href))
                     print(f"✨ مباراة جديدة: {info['title']}  ({key})")
                     # VIP أول، وبعد VIP_HEAD_START ثانية ينشر في X
