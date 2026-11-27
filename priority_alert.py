@@ -228,11 +228,11 @@ def message(title, url):
     key = url.split("/events/")[-1].lower()
     tokens = set(re.split(r"-", key))
     derby = next((name for clubs, name in DERBIES if clubs <= tokens), None)
-    lines = [f"🔥🔥 {derby} — انتهت الأولوية 🔥🔥" if derby else "🔓 انتهت الأولوية"]
-    if title:
-        lines.append(f"🏟️ {title}")
-    lines += ["✅ الحجز صار متاح للجميع الحين", "⚡ الحق قبل لا تخلص!", f"🔗 {url}"]
-    return "\n\n".join(lines)
+    teams = re.split(r"\s+[–-]\s+", title, maxsplit=1)[-1].strip() if title else ""
+    lines = [f"{derby}🔥"] if derby else []
+    lines.append(f"🔓 انتهت الأولوية: {teams}" if teams else "🔓 انتهت الأولوية")
+    lines += ["", "✅ الحجز صار متاح للجميع الحين", "⚡ الحق قبل لا تخلص!", "", f"🔗 {url}"]
+    return "\n".join(lines)
 
 
 # ---------------- الحلقة الرئيسية ----------------
