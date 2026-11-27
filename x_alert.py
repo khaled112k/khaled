@@ -292,9 +292,9 @@ def build_tweet(info, tags, url):
 
     derby = derby_of(tags)
     if derby:
-        lines = [f"🔥🔥 {derby[0]} 🔥🔥\n🚨 نزلت تذاكر الديربي | {title}"]
+        lines = [f"{derby[0]}\n🚨 طرح تذاكر الديربي: {title}"]
     else:
-        lines = [f"🚨 نزلت تذاكر | {title}"]
+        lines = [f"🚨 طرح تذاكر: {title}"]
     when = " ".join(x for x in (info["date"], info["time"]) if x)
     if when:
         lines.append(f"📅 {when}")
