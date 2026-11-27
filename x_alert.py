@@ -292,7 +292,7 @@ def build_tweet(info, tags, url):
 
     derby = derby_of(tags)
     if derby:
-        lines = [f"{derby[0]}\n🚨 طرح تذاكر الديربي: {title}"]
+        lines = [f"{derby[0]}🔥\n🚨 طرح تذاكر الديربي: {title}"]
     else:
         lines = [f"🚨 طرح تذاكر: {title}"]
     when = " ".join(x for x in (info["date"], info["time"]) if x)
@@ -381,7 +381,7 @@ def tg_alert_text(info, tags, url):
     derby = derby_of(tags)
     lines = []
     if derby:
-        lines.append(derby[0])
+        lines.append(f"{derby[0]}🔥")
         lines.append(f"🚨 طرح تذاكر الديربي: {title}")
     else:
         lines.append(f"🚨 طرح تذاكر: {title}")
