@@ -306,7 +306,7 @@ def build_tweet(info, tags, url):
     if INCLUDE_LINK:
         lines.append(f"🔗 {url}")
 
-    hashtags = " ".join(([derby[1]] if derby else []) + tags + ["#دوري_روشن", "#تذاكر"])
+    hashtags = " ".join(([derby[1]] if derby else []) + tags + ["#تذاكر"])
     # سطر فاضي بين كل صف وصف
     text = "\n\n".join(lines) + "\n\n" + hashtags
 
@@ -373,6 +373,31 @@ def post_to_x(text):
 # ---------------- قناة VIP في تيليجرام ----------------
 def head_start():
     return VIP_HEAD_START if VIP_BOT_TOKEN else 0
+
+
+def tg_alert_text(info, tags, url):
+    """رسالة تيليجرام (VIP والأصحاب): مرتبة، سطر لكل معلومة، وتبدأ بالعربي عشان ما تنقلب."""
+    title = info.get("title") or "مباراة جديدة"
+    derby = derby_of(tags)
+    lines = []
+    if derby:
+        lines.append(f"🔥🔥 {derby[0]} 🔥🔥")
+        lines.append(f"🚨 نزلت تذاكر الديربي: {title}")
+    else:
+        lines.append(f"🚨 نزلت تذاكر: {title}")
+    lines.append("")
+    when = " ".join(x for x in (info.get("date"), info.get("time")) if x)
+    if when:
+        lines.append(f"📅 {when}")
+    if info.get("city"):
+        lines.append(f"📍 {info['city']}")
+    if info.get("price"):
+        lines.append(f"💰 تبدأ من {info['price']} ريال")
+    lines.append("⚡ الحق قبل لا تخلص!" if derby else "⚡ متاحة الآن في ويبوك")
+    lines += ["", f"🔗 {url}"]
+    tg_tags = " ".join(([derby[1]] if derby else []) + tags + ["#تذاكر"])
+    lines += ["", tg_tags]
+    return "\n".join(lines)
 
 
 def vip_text(tweet, url):
@@ -1060,9 +1085,9 @@ def main():
                     print(f"✨ مباراة جديدة: {info['title']}  ({key})")
                     # VIP أول، وبعد VIP_HEAD_START ثانية ينشر في X
                     url_full = full_url(href)
-                    vip_id = send_vip(vip_text(tweet, url_full))
-                    fr_text = tweet if url_full in tweet else tweet + "\n\n" + url_full
-                    fr_id = send_friends(fr_text)
+                    tg_msg = tg_alert_text(info, tags, url_full)
+                    vip_id = send_vip(tg_msg)
+                    fr_id = send_friends(tg_msg)
                     if (vip_id or fr_id) and VIP_CATEGORIES:
                         cats = fetch_categories(page, url_full)
                         if cats:
