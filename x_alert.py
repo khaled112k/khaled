@@ -381,10 +381,10 @@ def tg_alert_text(info, tags, url):
     derby = derby_of(tags)
     lines = []
     if derby:
-        lines.append(f"🔥🔥 {derby[0]} 🔥🔥")
-        lines.append(f"🚨 نزلت تذاكر الديربي: {title}")
+        lines.append(derby[0])
+        lines.append(f"🚨 طرح تذاكر الديربي: {title}")
     else:
-        lines.append(f"🚨 نزلت تذاكر: {title}")
+        lines.append(f"🚨 طرح تذاكر: {title}")
     lines.append("")
     when = " ".join(x for x in (info.get("date"), info.get("time")) if x)
     if when:
