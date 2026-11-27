@@ -87,7 +87,6 @@ CLUBS = [
     (["nassr"], ["النصر"], "#النصر"),
     (["ittihad", "itihad"], ["الاتحاد"], "#الاتحاد"),
     (["ahli"], ["الأهلي", "الاهلي"], "#الأهلي"),
-    (["qadsiah", "qadisiyah", "qadsia", "qadisiya"], ["القادسية"], "#القادسية"),
 ]
 
 EVENT_SELECTOR = 'a[href*="/events/"]'
@@ -138,6 +137,56 @@ def match_sig(info):
         return ""
     norm = lambda x: re.sub(r"[\s\-–_.,:/]+", "", x.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")))
     return "sig:" + norm(title) + "|" + norm(date)
+
+
+def cats_groups(cats):
+    """{المجموعة: أرخص سعر} من قائمة الفئات."""
+    best = {}
+    for name, p in cats:
+        g = cat_group(name)
+        best[g] = min(best.get(g, p), p)
+    return best
+
+
+def stored_cats(seen, sig):
+    for item in seen:
+        if item.startswith("cats:" + sig + "="):
+            try:
+                return item, json.loads(item.split("=", 1)[1])
+            except Exception:
+                return item, None
+    return None, None
+
+
+def store_cats(seen, sig, groups):
+    """نحفظ فئات المباراة داخل ملف المحفوظات عشان نقارنها لو نزلت المباراة برابط ثاني."""
+    if not sig or not groups:
+        return
+    old, _ = stored_cats(seen, sig)
+    if old:
+        seen.discard(old)
+    seen.add("cats:" + sig + "=" + json.dumps(groups, ensure_ascii=False, sort_keys=True))
+
+
+def cheaper_cats(old, new):
+    """فئات إضافية أرخص من أرخص سعر قبل، أو فئات نزل سعرها: [(المجموعة, السعر, السعر القديم أو None)]."""
+    out = []
+    floor = min(old.values()) if old else 0
+    for g, p in sorted(new.items(), key=lambda x: x[1]):
+        if g not in old:
+            if p < floor:
+                out.append((g, p, None))
+        elif p < old[g]:
+            out.append((g, p, old[g]))
+    return out
+
+
+def cheaper_text(title, url, items):
+    lines = ["🆕 نزلت فئات جديدة / أرخص", "🏟️ " + title, ""]
+    for g, p, before in items:
+        lines.append(f"• {g} — {p:,} ﷼" + (f" (كان {before:,})" if before else " (جديدة)"))
+    lines += ["", "🔗 " + url]
+    return "\n".join(lines)[:4000]
 
 
 def parse_card(text):
@@ -595,7 +644,7 @@ def categories_text(cats):
     for g in order:
         by_price.setdefault(best[g], []).append(g)
     lines = [f"{' · '.join(gs)} — {p:,} ﷼" for p, gs in sorted(by_price.items())]
-    return ("🎟️ الفئات وأرخص سعر لكل وحدة:\n\n" + "\n".join(lines))[:4000]
+    return ("🎟️ الفئات وأسعارها:\n\n" + "\n".join(lines))[:4000]
 
 
 # ---------------- مراقبة الدفعات ----------------
@@ -979,9 +1028,30 @@ def main():
 
                     info = parse_card(text)
                     sig = match_sig(info)
-                    if re.search(r"-dup\d*$", key) or (sig and sig in seen):
-                        seen.add(key)  # نسخة مكررة من نفس المباراة (ويبوك أحياناً ينشر المباراة مرتين)
-                        print(f"⏭️ تجاهلت (مكررة): {key}")
+                    if re.search(r"-dup\d*$", key):
+                        seen.add(key)  # رابط تجريبي/مكرر من ويبوك
+                        print(f"⏭️ تجاهلت (رابط مكرر): {key}")
+                        continue
+                    if sig and sig in seen:
+                        # نفس المباراة برابط ثاني: ما ننبّه مرة ثانية، بس نشيك هل نزلت فئات جديدة أو أرخص
+                        seen.add(key)
+                        url_full = full_url(href)
+                        new_g = cats_groups(fetch_categories(page, url_full))
+                        _, old_g = stored_cats(seen, sig)
+                        if new_g and old_g:
+                            items = cheaper_cats(old_g, new_g)
+                            if items:
+                                msg = cheaper_text(info["title"], url_full, items)
+                                print(f"🆕 فئات جديدة/أرخص في مباراة مكررة: {key}")
+                                send_vip(msg)
+                                send_friends(msg)
+                            else:
+                                print(f"⏭️ تجاهلت (مكررة، نفس الفئات): {key}")
+                            store_cats(seen, sig, {g: min(p, old_g.get(g, p)) for g, p in new_g.items()} | {g: p for g, p in old_g.items() if g not in new_g})
+                        else:
+                            print(f"⏭️ تجاهلت (مكررة): {key}")
+                            store_cats(seen, sig, new_g)
+                        new_count += 1  # عشان نحفظ
                         continue
                     if sig:
                         seen.add(sig)
@@ -995,6 +1065,7 @@ def main():
                     if (vip_id or fr_id) and VIP_CATEGORIES:
                         cats = fetch_categories(page, url_full)
                         if cats:
+                            store_cats(seen, sig, cats_groups(cats))
                             ct = categories_text(cats)
                             png = price_map_png(cats, tags)
                             if vip_id:
